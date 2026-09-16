@@ -7,3 +7,6 @@ worker-configuration.d.ts
 
 # Ad-hoc screenshots dropped in the worktree for review
 Screenshot*.png
+
+.env
+.env.local
