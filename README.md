@@ -1,5 +1,7 @@
 # ETHGlossary
 
+Live at [glossary.ethereum.org](https://glossary.ethereum.org).
+
 Canonical Ethereum terminology glossary -- English style guide and translations for 24 languages.
 
 Usage rules, casing conventions, avoid lists, and contextual translations. Built for content creators, translators, and translation pipelines.
@@ -60,7 +62,7 @@ Runs locally at `http://localhost:8787`.
 - [Hono](https://hono.dev) -- web framework
 - [@hono/zod-openapi](https://github.com/honojs/middleware/tree/main/packages/zod-openapi) -- OpenAPI from Zod schemas
 - [Scalar](https://scalar.com) -- API docs UI
-- [Cloudflare Workers](https://workers.cloudflare.com) -- edge deployment
+- Container image built on every push to `main` (`.github/workflows/docker.yml`), run on Ethereum Foundation infrastructure
 
 ## License
 

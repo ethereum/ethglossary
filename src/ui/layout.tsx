@@ -47,10 +47,11 @@ export type BrandTone = "default" | "hero"
 /**
  * Where this page lives, for the canonical link and the share card.
  *
- * Taken from the incoming request rather than a constant, because the site is
- * served from a workers.dev host today and `ethglossary.xyz` later. A
- * hardcoded origin would make every share card point at the wrong host for
- * one of them -- and at the transitional one forever if nobody remembered.
+ * Taken from the incoming request rather than a constant, because the site
+ * has already lived on more than one host (a workers.dev preview, now
+ * glossary.ethereum.org). A hardcoded origin would make every share card
+ * point at the wrong host for one of them -- and at a stale one forever if
+ * nobody remembered.
  */
 export interface PageUrl {
   origin: string

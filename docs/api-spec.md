@@ -3,8 +3,8 @@
 **Status:** Draft, pending maintainer review
 **Date:** 2026-04-12
 **Stack:** Hono + @hono/zod-openapi + Scalar (auto-generated docs)
-**Deployment:** Cloudflare Workers (portable via Hono)
-**Data storage:** Static JSON in Workers bundle/KV (glossary), D1 SQLite (future feedback)
+**Deployment:** Container on Ethereum Foundation infrastructure at `https://glossary.ethereum.org` (Hono is runtime-portable)
+**Data storage:** Static JSON bundled with the app (glossary), Postgres (future feedback)
 
 ---
 
@@ -309,46 +309,15 @@ Single-term endpoints (`/api/style-guide/:termId` and `/api/translations/:lang/:
 
 ---
 
-## Phase 2 (Future): Community Feedback
+## Phase 2: Community Feedback
 
-Not built in Phase 1, but the data model and auth are designed to accommodate this.
-
-### Auth
-
-- **SIWE (Sign in with Ethereum)** as primary auth flow -- no email storage
-- Fallback social sign-in options: GitHub, Farcaster, others as needed
-- No API keys for end users
-- Auth required only for feedback submission, not for reads
-- Session stored in D1
-
-### Feedback Endpoints (Future)
-
-#### `POST /api/v1/feedback/:lang/:termId`
-
-Submit feedback on a translation.
-
-```json
-{
-  "type": "vote",
-  "value": "downvote",
-  "comment": "This should be 'contrato inteligente', not 'contracto inteligente'",
-  "suggestedTranslation": "contrato inteligente"
-}
-```
-
-#### `GET /api/v1/feedback/:lang/:termId`
-
-Get community feedback for a term translation.
-
-#### `GET /api/v1/feedback/summary`
-
-Aggregated feedback stats for harvesting. Used by maintainers to identify terms needing review.
-
-### Storage
-
-- **D1 (SQLite):** Feedback entries, user sessions, vote counts
-- **Schema:** `feedback(id, lang, termId, userId, type, value, comment, suggestedTranslation, createdAt)`
-- **Harvesting:** Periodic export of feedback for glossary maintainers to review and apply
+Designed, not yet built. The decisions live in `docs/design-decisions.md`
+(**Auth**, **Storage**): GitHub, Discord and SIWE sign-in with one method per
+account, no passwords or emails; feedback stored in the Postgres database
+devops provides as `DATABASE_URL`; schema as plain SQL in `migrations/`. The
+write routes under `/api/v1/feedback` will be documented by `/openapi.json`
+when they ship. Feedback is advisory: it is exported for maintainer review and
+never changes what the site or API serves.
 
 ---
 
@@ -386,21 +355,22 @@ Served at the root (`/`). Replaces the current `index.html` dashboard.
 
 ## Deployment
 
-### Cloudflare Workers
+### Container on Ethereum Foundation infrastructure
 
-- **Runtime:** Hono on Workers
-- **Static data:** Glossary JSON in Workers bundle (< 25MB free tier limit) or KV for overflow
-- **Database:** D1 for Phase 2 feedback
+- **Runtime:** Hono, in a container built by `.github/workflows/docker.yml` on every push to `main`
+- **Static data:** Glossary JSON bundled with the app
+- **Database:** Postgres for Phase 2 feedback, provided as `DATABASE_URL`
 - **Docs:** Scalar UI served at `/docs`
-- **CI/CD:** GitHub Actions -> `wrangler deploy`
+- **CI/CD:** push to `main` -> image on `ghcr.io/ethereum/ethglossary` -> rollout within about five minutes
 
 ### Environment Variables
 
 ```
 # Phase 1: None required for read-only
-# Phase 2:
-AUTH_SECRET=...          # Session signing
-D1_DATABASE_ID=...       # Feedback database (auto-configured by wrangler)
+# Phase 2 (injected by devops into the running container, never committed):
+DATABASE_URL=...         # Postgres connection string
+GITHUB_CLIENT_ID=...     # GitHub OAuth App
+GITHUB_CLIENT_SECRET=...
 ```
 
 ---
@@ -409,20 +379,12 @@ D1_DATABASE_ID=...       # Feedback database (auto-configured by wrangler)
 
 ### 1. Authentication (Phase 2)
 
-**Sign in with Ethereum (SIWE) is the primary auth flow.** Natural fit for the community. Additional social sign-in options available as fallback for non-crypto-native translators. Priority order:
-
-1. **SIWE (Sign in with Ethereum)** -- primary, crypto-native, no email required
-2. **Discord** -- proven with community (original ethglossary used Discord-only auth)
-3. **GitHub** -- developer-friendly, many contributors already have accounts
-4. **Farcaster** -- crypto-native alternative
-5. **Passkeys / magic links** -- passwordless, low friction, no third-party dependency
-
-No email storage. No Google. Session-based auth via D1.
+Decided 2026-09-09; the current decision lives in `docs/design-decisions.md` under **Auth**: GitHub, Discord and SIWE in the first release, passkeys next, one sign-in method per account, no passwords, no emails, no Google. Sessions are opaque tokens stored hashed in Postgres.
 
 ### 2. Rate Limiting
 
 - **Content size cap:** 1MB max per filter request (pipeline caps LLM requests at ~64KB, so 1MB provides comfortable headroom)
-- **Request rate:** Generous to start -- 100 req/min per IP for reads, 20 req/min for filter (POST). Adjustable without code changes via Workers config.
+- **Request rate:** Generous to start -- 100 req/min per IP for reads, 20 req/min for filter (POST). Adjustable through environment configuration.
 - **429 response** with `Retry-After` header when exceeded.
 
 ### 3. Caching
@@ -438,7 +400,7 @@ Glossary data changes very infrequently. Aggressive caching is appropriate.
 | `/api/v1/filter`  | `no-store`                                         | POST, dynamic per-request                     |
 | `/api/v1/schema`  | `public, max-age=604800` (7d)                      | Schema rarely changes                         |
 
-`stale-while-revalidate` ensures users get instant responses from cache while Workers fetches fresh data in the background on the next request after expiry.
+`stale-while-revalidate` ensures users get instant responses from cache while the server fetches fresh data in the background on the next request after expiry.
 
 ### 4. API Versioning
 
