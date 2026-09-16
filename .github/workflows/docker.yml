@@ -35,10 +35,11 @@ jobs:
         id: tags
         run: |
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          sha="${GITHUB_SHA}"
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tags=ghcr.io/${repo}:${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/${repo}:${GITHUB_REF#refs/tags/},ghcr.io/${repo}:${sha}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/${repo}:main,ghcr.io/${repo}:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/${repo}:main,ghcr.io/${repo}:latest,ghcr.io/${repo}:${sha}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
