@@ -35,7 +35,7 @@ jobs:
         id: tags
         run: |
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          sha="${GITHUB_SHA}"
+          sha="sha-${GITHUB_SHA}"
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "tags=ghcr.io/${repo}:${GITHUB_REF#refs/tags/},ghcr.io/${repo}:${sha}" >> "$GITHUB_OUTPUT"
           else
