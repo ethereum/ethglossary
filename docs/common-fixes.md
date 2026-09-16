@@ -106,7 +106,7 @@ for f in src/data/translations/glossary-*.json; do jq empty "$f" || echo "INVALI
 node scripts/audit-glossary.mjs | head -60
 
 # Build check (for any change)
-npx wrangler deploy --dry-run --outdir=/tmp/wrangler-out
+pnpm run build
 
 # Type check (informational; the URL global error is pre-existing and unrelated)
 npx tsc --noEmit
@@ -117,10 +117,10 @@ sleep 5
 scripts/verify-deploy.sh http://127.0.0.1:8787
 ```
 
-After deploy:
+After the merge to `main` has rolled out (about five minutes):
 
 ```bash
-scripts/verify-deploy.sh https://ethglossary.visual-20-hoists.workers.dev
+scripts/verify-deploy.sh https://glossary.ethereum.org
 ```
 
 ## When in doubt

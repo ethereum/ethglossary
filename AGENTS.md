@@ -4,7 +4,7 @@ Conventions for any agent (Claude Code, GitHub Copilot, Cursor, OpenAI Codex, ot
 
 ## What this repo is
 
-ETHGlossary is a standalone API and HTML viewer for canonical Ethereum terminology, deployed on Cloudflare Workers. Three consumers:
+ETHGlossary is a standalone API and HTML viewer for canonical Ethereum terminology, served from a container on Ethereum Foundation infrastructure at `https://glossary.ethereum.org`. Three consumers:
 
 - Humans browsing the viewer at `/`
 - LLMs and tooling consuming `/openapi.json` and `/llms.txt`
@@ -15,14 +15,14 @@ Two product surfaces:
 - **English style guide** -- 521 terms with casing rules, avoid lists, aliases, editorial notes. Authoritative for "what is the right way to write `<term>`?"
 - **Translation reference** -- 24 languages with contextual forms (prose, heading, tag, UI), plurals, grammar, confidence levels, and a v1-locked transliteration policy covering 13 non-Latin-script languages.
 
-Live deployment: `https://ethglossary.visual-20-hoists.workers.dev` (transitional; custom domain `ethglossary.xyz` is owned and will be pointed at the Worker). The repo is `github.com/wackerow/ethglossary` and will eventually move to the `ethereum` org. Consumers should call the URL, not the GitHub path.
+Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethereum/ethglossary`. Consumers should call the URL, not the GitHub path.
 
 ## Stack
 
 - **Hono** `^4.12.x` -- edge-deployable web framework
 - **@hono/zod-openapi** `^1.3.x` -- routes defined with Zod; OpenAPI 3.1 auto-generated
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
-- **Cloudflare Workers** + `wrangler` CLI -- deploy target
+- **Container image** built by `.github/workflows/docker.yml` on every push to `main`, rolled out on EF infrastructure by devops. Inside the container the app currently runs under `wrangler dev` (see `Dockerfile`); wrangler is the local runtime and type generator, not a deploy tool
 - **TypeScript 5.x**, ESM, no build step beyond what wrangler does
 
 Auto-generated OpenAPI from the same Zod schemas used for runtime validation is a real win. Do not migrate to Next.js or another framework without strong reason. See `docs/design-decisions.md` if tempted.
@@ -191,7 +191,7 @@ In priority order:
 - Avoid technologies that further empower already-wealthy/powerful entities.
 - Prioritize FLOSS / open-source tooling.
 - Prioritize privacy and individual freedom.
-- Cloudflare for hosting is fine.
+- Hosting is Ethereum Foundation infrastructure run by devops. No third-party hosting accounts.
 
 No telemetry / analytics may be added without explicit ask.
 
@@ -440,23 +440,27 @@ node scripts/audit-glossary.mjs > /tmp/audit-report.md
 
 ### Verify a deploy
 ```bash
-scripts/verify-deploy.sh https://ethglossary.visual-20-hoists.workers.dev
+scripts/verify-deploy.sh https://glossary.ethereum.org
 scripts/verify-deploy.sh http://127.0.0.1:8787
 ```
 
 ### Deploy to production
-```bash
-npx wrangler deploy --minify
-```
 
-Requires `npx wrangler login` once per machine (OAuth flow needs port 8976 forwarded for SSH sessions).
+There is no manual deploy. Every push to `main` builds a container image
+through `.github/workflows/docker.yml`, publishes it to
+`ghcr.io/ethereum/ethglossary`, and devops' cluster rolls it out within about
+five minutes. Verify with `scripts/verify-deploy.sh https://glossary.ethereum.org`
+once it lands. Never run `wrangler deploy` or `wrangler login`; there is no
+Cloudflare deployment.
 
 ### Push to GitHub
 
-If working from a worktree of another repo, the remote is named `ethglossary` (not `origin`). Push the local branch as the repo's default branch:
+The remote is `origin` = `git@github.com:ethereum/ethglossary.git`. Push a
+feature branch and open a pull request; never push to `main` directly, and
+never force-push a shared branch.
 
 ```bash
-git push ethglossary <local-branch>:main
+git push -u origin <branch>
 ```
 
 Only push after explicit single-use approval. Never combine commit and push.

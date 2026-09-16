@@ -99,11 +99,7 @@ Do not hardcode any domain in the spec. The scheme has to come from the proxy: t
 
 If this codebase is checked out as a worktree of a larger parent monorepo:
 
-- **Do NOT run `git remote remove origin`** -- it removes the remote from the parent too. Worktrees share git remotes with the parent repo. This repo is published as `wackerow/ethglossary`; if you are in a worktree, add a separate remote (e.g. `ethglossary`) rather than touching `origin`. Example:
-  ```bash
-  git remote add ethglossary git@github.com:wackerow/ethglossary.git
-  git push ethglossary HEAD:main
-  ```
+- **Do NOT run `git remote remove origin`** -- worktrees share git remotes with the parent checkout, so it removes the remote everywhere. The remote is `origin` = `git@github.com:ethereum/ethglossary.git`. Push feature branches and open a pull request; never push to `main`.
 - **`pnpm install` from a worktree of a parent monorepo** will try to manage the parent's `node_modules`. Either rely on the empty `pnpm-workspace.yaml` (which already declares `packages: []` to isolate) or pass `--ignore-workspace` explicitly.
 
 ## 10. Wrangler binds to `127.0.0.1` by default
@@ -133,16 +129,10 @@ Watch for breakage on Scalar version bumps. If the cast is no longer needed, rem
 
 `src/data/glossary-schema.json` describes a richer data shape than what is actually bundled and used. Specifically the schema documents `entries` keyed by slug with nested `en` and `translations`, while the runtime reads `confirmed_terms` keyed by canonical term name with translations in separate files. **The schema does not validate the bundled data.** Treat it as a design document until the migration aligns the two.
 
-## 13. The OAuth flow for `wrangler login` needs port 8976 forwarded over SSH
+## 13. There is no Cloudflare account in the loop
 
-If you are doing one-time `npx wrangler login` over SSH, forward port 8976 in addition to your dev port:
+Never run `wrangler login` or `wrangler deploy`. Wrangler is only the local dev server behind `pnpm dev` and the type generator behind `pnpm run cf-typegen`. Production is a container built from `main` by `.github/workflows/docker.yml` and rolled out by devops; see AGENTS.md "Deploy to production".
 
-```bash
-ssh -L 8787:127.0.0.1:8787 -L 8976:127.0.0.1:8976 host
-```
+## 14. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
 
-Otherwise the OAuth callback will fail silently.
-
-## 14. The custom domain `ethglossary.xyz` is owned but not yet pointed
-
-When pointed at the Worker, no code change is required. The repo is also planned to move to the ethereum org -- consumers should call the URL, not the GitHub repo path.
+The container is reached over plain http, so the request URL says `http://`. Build every absolute URL through `requestOrigin()` (see item 8). Consumers should call the URL, not the GitHub repo path; the repo is `github.com/ethereum/ethglossary`.

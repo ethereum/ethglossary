@@ -4,10 +4,10 @@ Load when tempted to introduce a new framework, dependency, storage layer, or to
 
 ## Stack
 
-**Hono + @hono/zod-openapi + @scalar/hono-api-reference on Cloudflare Workers.**
+**Hono + @hono/zod-openapi + @scalar/hono-api-reference, shipped as a container.**
 
 Reasoning:
-- Edge-deployable, free tier covers the workload, no Google/AWS dependency.
+- Runtime-portable: the same app ran on Cloudflare Workers and now runs in a container on Ethereum Foundation infrastructure with no application code change. No Google/AWS dependency.
 - Zod schemas double as runtime validation and OpenAPI source. Auto-generated docs are a real win we lose if we migrate to Next.js, NestJS, or a framework with separate validation and docs systems.
 - TypeScript everywhere; no build step beyond what wrangler does.
 
@@ -15,14 +15,14 @@ Do not migrate to Next.js or another framework without a strong reason. "I want 
 
 ## Storage
 
-**Glossary JSON is bundled into the Workers deploy.**
+**Glossary JSON is bundled into the build.**
 
 Reasoning:
-- ~15MB of data, well under the 25MB Workers bundle limit.
+- ~15MB of data, loaded once at startup.
 - Read-only data -- no need for a database.
 - Bundling eliminates a request hop and keeps cold-start latency tiny.
 
-Phase 2 (designed, not built) adds a database for community feedback (votes, comments). **D1** is the chosen target -- Cloudflare's SQLite-backed edge DB. Not Postgres-on-Neon, not Supabase, not anything Google-touched.
+Phase 2 (designed, not built) adds a database for community feedback. The store is **Postgres**, provisioned and run by Ethereum Foundation devops and handed to the app as a `DATABASE_URL` environment variable. Not a third-party hosted database, not anything Google-touched. The schema is plain SQL in `migrations/`, to be applied by the app itself at startup, so it stays portable. Feedback is advisory: the database never changes what the site or API serves.
 
 ## Versioning and API stability
 
@@ -103,7 +103,7 @@ Aggressive on reads, none on writes:
 - `/api/v1/schema` -- 7 days
 - `/api/v1/filter` -- `no-store`
 
-Reasoning: the glossary changes weekly at most. Aggressive caching reduces worker invocations, which keeps the deploy free and the experience fast.
+Reasoning: the glossary changes weekly at most. Aggressive caching keeps origin load low and the experience fast.
 
 ## Domains
 
@@ -111,7 +111,7 @@ Reasoning: the glossary changes weekly at most. Aggressive caching reduces worke
 
 The OpenAPI spec self-derives `servers` from the request origin (see `src/index.ts`). The README explicitly says "consumers should not hardcode any domain."
 
-The repo is published as `wackerow/ethglossary` and is planned to move to the `ethereum` GitHub org. The custom domain `ethglossary.xyz` is owned and will be pointed at the Worker. When that happens, no code change is required.
+The repo lives at `github.com/ethereum/ethglossary` and the site at `https://glossary.ethereum.org`; the code learns neither. The host comes from the request and the scheme from the proxy's `X-Forwarded-Proto` (see `src/lib/request-origin.ts`), so a change of host needs no code change.
 
 ## License
 

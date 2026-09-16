@@ -4,7 +4,7 @@
 #
 # Usage:
 #   scripts/verify-deploy.sh                                              # defaults to local 127.0.0.1:8787
-#   scripts/verify-deploy.sh https://ethglossary.visual-20-hoists.workers.dev
+#   scripts/verify-deploy.sh https://glossary.ethereum.org
 #   scripts/verify-deploy.sh http://127.0.0.1:8787
 
 set -euo pipefail

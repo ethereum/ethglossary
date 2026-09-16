@@ -8,8 +8,8 @@
 /** Where the translation community coordinates. */
 export const DISCORD_URL = "https://ethereum.org/discord"
 
-/** Source repository. Moves to the `ethereum` org eventually -- see AGENTS.md. */
-export const GITHUB_URL = "https://github.com/wackerow/ethglossary"
+/** Source repository. */
+export const GITHUB_URL = "https://github.com/ethereum/ethglossary"
 
 /*
  * Social accounts.
@@ -27,7 +27,7 @@ export const X_HANDLE = "@ethdotorg"
 /**
  * Share card. 1200x630, regenerated from the landing-page hero by
  * `scripts/build-og.sh`. Relative -- the origin is taken from the request, so
- * this works on the workers.dev host, a preview, and the custom domain alike.
+ * this works on whichever host the site is served from.
  */
 export const OG_IMAGE = "/img/og.jpg"
 
