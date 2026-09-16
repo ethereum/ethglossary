@@ -33,6 +33,8 @@ import type { ContextId } from "../lib/context-types"
 import { languageFromCookie } from "../lib/negotiate-language"
 import { LANG_COOKIE, LANG_COOKIE_MAX_AGE } from "../lib/constants"
 import type { PageUrl } from "../ui/layout"
+import { requestOrigin } from "../lib/request-origin"
+import type { OriginRequest } from "../lib/request-origin"
 import ethglossaryMark from "../ui/icons/ethglossary.svg"
 
 const app = new OpenAPIHono()
@@ -57,14 +59,15 @@ const navLang = (c: { req: { header: (k: string) => string | undefined } }) =>
  * Origin and path for the canonical link and share card.
  *
  * Read off the request every time rather than stored in a constant -- the
- * site answers on a workers.dev host now and `ethglossary.xyz` later, and a
- * share card has to name whichever host the visitor actually reached.
+ * site has answered on a workers.dev host and on glossary.ethereum.org, and a
+ * share card has to name whichever host the visitor actually reached. The
+ * scheme comes from the proxy's forwarded header; see src/lib/request-origin.ts.
  * Query strings are dropped: ?category= is a filter, not a separate page.
  */
-const pageUrl = (c: { req: { url: string } }): PageUrl => {
-  const u = new URL(c.req.url)
-  return { origin: u.origin, path: u.pathname }
-}
+const pageUrl = (c: { req: OriginRequest }): PageUrl => ({
+  origin: requestOrigin(c.req),
+  path: new URL(c.req.url).pathname,
+})
 
 /** Master terms sorted for display, with their canonical key kept alongside. */
 function sortedTerms() {

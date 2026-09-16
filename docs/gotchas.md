@@ -93,7 +93,7 @@ Roughly 197/532 entries have `note`. Bonus context, not guaranteed. Do not write
 
 `src/index.ts` uses `app.doc31` with the function form, reading `c.req.url` and using `new URL(url).origin` for the `servers` field. The spec self-adapts to whatever host serves it.
 
-Do not hardcode any domain in the spec. The custom domain `ethglossary.xyz` is owned and will eventually point at the Worker; no code change is required when that happens.
+Do not hardcode any domain in the spec. The scheme has to come from the proxy: the container is reached over plain http behind a TLS-terminating proxy, so `new URL(c.req.url).origin` says `http://` on the public site. Use `requestOrigin()` from `src/lib/request-origin.ts`, which honors `X-Forwarded-Proto` (values `http`/`https` only) and keeps the request's own host.
 
 ## 9. Worktree hazards
 
