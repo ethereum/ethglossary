@@ -309,46 +309,15 @@ Single-term endpoints (`/api/style-guide/:termId` and `/api/translations/:lang/:
 
 ---
 
-## Phase 2 (Future): Community Feedback
+## Phase 2: Community Feedback
 
-Not built in Phase 1, but the data model and auth are designed to accommodate this.
-
-### Auth
-
-- **SIWE (Sign in with Ethereum)** as primary auth flow -- no email storage
-- Fallback social sign-in options: GitHub, Farcaster, others as needed
-- No API keys for end users
-- Auth required only for feedback submission, not for reads
-- Session stored in D1
-
-### Feedback Endpoints (Future)
-
-#### `POST /api/v1/feedback/:lang/:termId`
-
-Submit feedback on a translation.
-
-```json
-{
-  "type": "vote",
-  "value": "downvote",
-  "comment": "This should be 'contrato inteligente', not 'contracto inteligente'",
-  "suggestedTranslation": "contrato inteligente"
-}
-```
-
-#### `GET /api/v1/feedback/:lang/:termId`
-
-Get community feedback for a term translation.
-
-#### `GET /api/v1/feedback/summary`
-
-Aggregated feedback stats for harvesting. Used by maintainers to identify terms needing review.
-
-### Storage
-
-- **D1 (SQLite):** Feedback entries, user sessions, vote counts
-- **Schema:** `feedback(id, lang, termId, userId, type, value, comment, suggestedTranslation, createdAt)`
-- **Harvesting:** Periodic export of feedback for glossary maintainers to review and apply
+Designed, not yet built. The decisions live in `docs/design-decisions.md`
+(**Auth**, **Storage**): GitHub, Discord and SIWE sign-in with one method per
+account, no passwords or emails; feedback stored in the Postgres database
+devops provides as `DATABASE_URL`; schema as plain SQL in `migrations/`. The
+write routes under `/api/v1/feedback` will be documented by `/openapi.json`
+when they ship. Feedback is advisory: it is exported for maintainer review and
+never changes what the site or API serves.
 
 ---
 
