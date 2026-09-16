@@ -251,10 +251,12 @@ Rules that are easy to get wrong:
 - **URLs to Discord, GitHub, X, Farcaster or ethereum.org come from
   `src/lib/constants.ts`.** Never inline them. ETHGlossary has no social
   accounts of its own -- X and Farcaster point at ethereum.org's.
-- **Never hardcode the site's own origin.** It is `workers.dev` today and
-  `ethglossary.xyz` later. Canonical links, `og:*` URLs, `robots.txt` and
-  `sitemap.xml` all take it from the request via `pageUrl()` in
-  `src/routes/viewer.tsx`.
+- **Never hardcode the site's own origin.** Canonical links, `og:*` URLs,
+  `robots.txt`, `sitemap.xml` and the OpenAPI `servers` entry all take it
+  from the request through `requestOrigin()` in `src/lib/request-origin.ts`,
+  which reads the scheme from the proxy's `X-Forwarded-Proto` and the host
+  from the request. Never read `new URL(c.req.url).origin` directly: behind
+  the TLS-terminating proxy it says `http://`.
 - **External links go through `<ExternalLink>`** in `src/ui/link.tsx`, which
   adds `target="_blank"`, the `rel` pair, and Lucide's external-link marker.
   Pass `hideArrow` for icon-only links, and always give those an `aria-label`.
