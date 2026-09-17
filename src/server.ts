@@ -12,6 +12,9 @@
 import { serve } from "@hono/node-server"
 import { serveStatic } from "@hono/node-server/serve-static"
 import app from "./index"
+import { closeDatabase, openDatabase } from "./db/client"
+import { migrate } from "./db/migrate"
+import { describeBuild, runIndexer } from "./lib/indexer"
 
 const port = Number(process.env.PORT ?? 8787)
 // Loopback by default so a laptop is not listening on every interface; the
@@ -39,12 +42,44 @@ app.get("/healthz", (c) => {
   return c.text("ok")
 })
 
+/*
+ * The feedback store is optional. Without DATABASE_URL the site is the
+ * read-only glossary it always was. With it, the schema is brought up to date
+ * before the server listens, and the change indexer runs once the server is
+ * up. A database that cannot be reached is logged and the site still serves:
+ * the glossary API is the critical path, feedback is not.
+ */
+let db = process.env.DATABASE_URL ? openDatabase(process.env.DATABASE_URL) : null
+if (db) {
+  try {
+    const applied = await migrate(db)
+    console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
+  } catch (err) {
+    console.error("database unavailable, serving without feedback features:", (err as Error).message)
+    await closeDatabase()
+    db = null
+  }
+} else {
+  console.log("DATABASE_URL not set, serving without feedback features")
+}
+
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(
     `ethglossary listening on http://${info.address}:${info.port}` +
       (process.env.GIT_SHA ? ` (${process.env.GIT_SHA.slice(0, 7)})` : "")
   )
 })
+
+if (db) {
+  const sql = db
+  describeBuild()
+    .then((build) => runIndexer(sql, build))
+    .then((r) => {
+      const detail = r.status === "indexed" ? ` (${r.first ? "first run, " : ""}${r.changes} changes)` : ""
+      console.log(`indexer: ${r.status}${detail}`)
+    })
+    .catch((err) => console.error("indexer failed:", err))
+}
 
 /*
  * A rollout sends SIGTERM and waits. Stop accepting connections, let in-flight
@@ -53,7 +88,10 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
  */
 const shutdown = (signal: string) => {
   console.log(`${signal} received, shutting down`)
-  server.close(() => process.exit(0))
+  server.close(() => {
+    const closeDb = db ? db.end({ timeout: 5 }) : Promise.resolve()
+    void closeDb.finally(() => process.exit(0))
+  })
   setTimeout(() => process.exit(1), 10_000).unref()
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"))

@@ -1,0 +1,16 @@
+# Local development only: the Postgres that DATABASE_URL in .env.example
+# points at. Production is a managed cluster run by devops.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ethglossary
+      POSTGRES_PASSWORD: ethglossary
+      POSTGRES_DB: ethglossary
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ethglossary-postgres:/var/lib/postgresql/data
+
+volumes:
+  ethglossary-postgres:

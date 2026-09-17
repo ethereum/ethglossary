@@ -10,6 +10,13 @@ import termsData from "../data/glossary-terms-enhanced.json"
 // Types derived from the JSON structure
 export interface GlossaryTerm {
   id: string
+  /**
+   * Stable identifier: ten characters of [0-9a-z], minted once by
+   * `scripts/term-uid.mjs` and never changed. Feedback and change history
+   * key on this, because both the canonical name and the `id` slug change
+   * when a term is renamed.
+   */
+  uid: string
   term: string
   category: string
   term_role?:
@@ -164,6 +171,27 @@ function assertIdsAreUrlSafe(): void {
 }
 
 assertIdsAreUrlSafe()
+
+/**
+ * Every entry carries a stable `uid`, and no two share one. Feedback and
+ * change history are keyed on it, so a missing or duplicated uid would
+ * silently attach one term's feedback to another. Fail at load instead.
+ */
+function assertUidsAreUnique(): void {
+  const shape = /^[0-9a-z]{10}$/
+  const seen = new Map<string, string>()
+  const bad: string[] = []
+  for (const entry of Object.values(confirmedTerms)) {
+    if (!entry.uid || !shape.test(entry.uid)) bad.push(`${entry.term} -> ${entry.uid ?? "missing"}`)
+    else if (seen.has(entry.uid)) bad.push(`${entry.term} shares uid with ${seen.get(entry.uid)}`)
+    else seen.set(entry.uid, entry.term)
+  }
+  if (bad.length) {
+    throw new Error(`glossary uids must be present and unique -- ${bad.join("; ")}`)
+  }
+}
+
+assertUidsAreUnique()
 
 export function getTerms(): Record<string, GlossaryTerm> {
   return confirmedTerms
