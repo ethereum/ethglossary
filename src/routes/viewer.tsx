@@ -76,8 +76,8 @@ function sortedTerms() {
     .sort((a, b) => a.term.localeCompare(b.term))
 }
 
-// The stylesheet is a build artifact served from public/assets by the
-// Workers assets binding, not a route -- see scripts in package.json.
+// The stylesheet is a build artifact served from public/ by the Node entry
+// point (src/server.ts), not a route -- see scripts in package.json.
 
 // The favicon is the same vector file the nav renders, served rather than
 // copied into public/ so there is one source of truth for the mark.

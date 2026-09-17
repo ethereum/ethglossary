@@ -5,7 +5,7 @@
  * to the container over http and states the public scheme in
  * X-Forwarded-Proto. Read it, so canonical links, share cards, the sitemap,
  * the OpenAPI servers entry and, later, OAuth callbacks all say https. Direct
- * traffic (wrangler dev, a workers.dev host) carries no such header and falls
+ * traffic (local development) carries no such header and falls
  * back to the URL the runtime saw.
  *
  * Only the scheme is taken from the proxy, and only when it is literally

@@ -3,14 +3,17 @@
   "version": "0.3.0",
   "type": "module",
   "scripts": {
-    "dev": "pnpm run build && wrangler dev",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "dev": "pnpm run build:assets && node scripts/dev.mjs",
+    "start": "node dist/server.js",
+    "build": "pnpm run build:assets && pnpm run bundle",
+    "build:assets": "pnpm run build:fonts && pnpm run build:css",
     "build:fonts": "node scripts/build-fonts.mjs",
-    "check": "tsc --noEmit",
     "build:css": "tailwindcss -i src/ui/app.css -o public/assets/app.css",
-    "build": "pnpm run build:fonts && pnpm run build:css"
+    "bundle": "node scripts/build-server.mjs",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.1",
     "@hono/zod-openapi": "^1.3.0",
     "@scalar/hono-api-reference": "^0.10.7",
     "hono": "^4.12.12"
@@ -24,9 +27,10 @@
     "@fontsource/noto-sans-telugu": "^5.3.0",
     "@fontsource/noto-serif": "^5.3.0",
     "@tailwindcss/cli": "^4.3.3",
+    "@types/node": "^22.20.3",
+    "esbuild": "^0.28.2",
     "lucide-static": "^1.39.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.8.3",
-    "wrangler": "^4.81.1"
+    "typescript": "^5.8.3"
   }
 }

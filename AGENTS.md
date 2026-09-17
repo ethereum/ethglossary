@@ -22,8 +22,9 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **Hono** `^4.12.x` -- edge-deployable web framework
 - **@hono/zod-openapi** `^1.3.x` -- routes defined with Zod; OpenAPI 3.1 auto-generated
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
-- **Container image** built by `.github/workflows/docker.yml` on every push to `main`, rolled out on EF infrastructure by devops. Inside the container the app currently runs under `wrangler dev` (see `Dockerfile`); wrangler is the local runtime and type generator, not a deploy tool
-- **TypeScript 5.x**, ESM, no build step beyond what wrangler does
+- **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
+- **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
+- **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
 Auto-generated OpenAPI from the same Zod schemas used for runtime validation is a real win. Do not migrate to Next.js or another framework without strong reason. See `docs/design-decisions.md` if tempted.
 
@@ -37,7 +38,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── package.json
 ├── pnpm-workspace.yaml              # empty -- isolates from any parent workspace
 ├── tsconfig.json                    # resolveJsonModule: true (we import .json)
-├── wrangler.jsonc                   # Workers config; text rule for *.txt
+├── Dockerfile                       # production image: node dist/server.js
+├── .github/workflows/docker.yml     # builds and publishes the image on push to main
 ├── docs/
 │   ├── api-spec.md                  # internal planning spec
 │   ├── data-shape.md                # GlossaryTerm / TranslationEntry shapes; script_rule reconciliation
@@ -47,9 +49,12 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 │   └── term-template.json           # template for a new GlossaryTerm
 ├── scripts/
 │   ├── audit-glossary.mjs           # audit data vs v1 policy; outputs Markdown
+│   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js
+│   ├── dev.mjs                      # esbuild watch + node --watch, loads .env.local
 │   └── verify-deploy.sh             # smoke test for a running deploy
 └── src/
-    ├── index.ts                     # entry: CORS, cache, OpenAPI doc, Scalar, viewer mount
+    ├── index.ts                     # the app: CORS, cache headers, OpenAPI doc, Scalar, viewer mount
+    ├── server.ts                    # Node entry: static files, /healthz, listen, SIGTERM
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -266,7 +271,7 @@ Rules that are easy to get wrong:
   the 200-of-532 terms whose id differs from their key reachable at all.
 - **Icons are Lucide imports at the call site.** `import thumbsUp from
   "lucide-static/icons/thumbs-up.svg"`, then `<Icon svg={thumbsUp} />`. The
-  wrangler Text rule resolves the import to source text, so there is no
+  esbuild text loader resolves the import to source text, so there is no
   registry to update and nothing to copy into the repo. `src/ui/icons/` is
   for custom art only -- today the brand marks Lucide does not ship.
 - **A table row with one link is clickable end to end.** Put `data-row-link`
@@ -338,7 +343,7 @@ Read `docs/data-shape.md` and `docs/term-template.json` first. Then:
 6. **Validate**: `npx tsc --noEmit`
 7. **Test resolution locally**:
    ```bash
-   npx wrangler dev --port 8787
+   pnpm dev
    curl http://127.0.0.1:8787/api/v1/style-guide/<termId>
    curl http://127.0.0.1:8787/api/v1/translations/en/<termId>
    curl http://127.0.0.1:8787/api/v1/languages          # confirm stats unchanged
@@ -396,13 +401,15 @@ Quick lookup before loading the full policy:
 
 ```bash
 pnpm install                       # uses --ignore-workspace via empty pnpm-workspace.yaml
-pnpm dev                           # builds assets, then wrangler dev on 127.0.0.1
+pnpm dev                           # fonts + css, then esbuild in watch mode, restarting node on 127.0.0.1:8787 after each rebuild
 ```
 
-**Use `pnpm dev`, not bare `wrangler dev`.** The stylesheet is a build
-artifact; starting the worker without building first serves a page with no
+**Use `pnpm dev`, not bare `node dist/server.js`.** The stylesheet is a build
+artifact; starting the server without building first serves a page with no
 CSS at all. The build output IS committed so a fresh clone renders, but it
-goes stale the moment you edit a class -- `pnpm dev` keeps it honest.
+goes stale the moment you edit a class -- `pnpm dev` keeps it honest. `pnpm
+dev` also loads `.env.local` when present (gitignored; copy `.env.example`),
+which is where OAuth and database settings live on a development machine.
 
 SSH-tunnel for remote dev (use `127.0.0.1`, not `localhost`):
 ```bash
@@ -414,24 +421,23 @@ ssh -L 8787:127.0.0.1:8787 host
 pnpm run check     # tsc --noEmit
 ```
 
-Run `npx wrangler types --env-interface CloudflareBindings` first on a fresh
-clone -- `worker-configuration.d.ts` is gitignored and `tsc` fails without it.
-
 ### Build the viewer assets
 ```bash
-pnpm run build          # fonts + css
+pnpm run build          # fonts + css + server bundle (what the Dockerfile runs)
+pnpm run build:assets   # fonts + css only (what `pnpm dev` runs before watching)
 ```
 
-`dev` and `deploy` both run this first, so you rarely call it directly. The
-two steps are independent:
+The asset steps are independent of each other:
 
 - `build:fonts` regenerates `src/ui/fonts.css` and repopulates `public/fonts/`
   from the `@fontsource` packages. Fonts are self-hosted -- never link a CDN.
 - `build:css` compiles `src/ui/app.css` to `public/assets/app.css` with
   Tailwind. **Editing a class in a `.tsx` requires a rebuild to take effect.**
   The output is committed (so a clone renders without a build) and is left
-  unminified on purpose, so the diff is reviewable. Cloudflare compresses it
-  in transit either way. Rebuild and commit it whenever classes change.
+  unminified on purpose, so the diff is reviewable; the proxy compresses it in
+  transit either way. Rebuild and commit it whenever classes change.
+- `bundle` runs esbuild over `src/server.ts` into `dist/server.js`, one file
+  with every dependency inside. `dist/` is gitignored; the container builds it.
 
 ### Audit data against v1 policy
 ```bash
@@ -450,8 +456,8 @@ There is no manual deploy. Every push to `main` builds a container image
 through `.github/workflows/docker.yml`, publishes it to
 `ghcr.io/ethereum/ethglossary`, and devops' cluster rolls it out within about
 five minutes. Verify with `scripts/verify-deploy.sh https://glossary.ethereum.org`
-once it lands. Never run `wrangler deploy` or `wrangler login`; there is no
-Cloudflare deployment.
+once it lands. There is no wrangler in the repo and no Cloudflare
+deployment; do not add either back.
 
 ### Push to GitHub
 

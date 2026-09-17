@@ -102,9 +102,9 @@ If this codebase is checked out as a worktree of a larger parent monorepo:
 - **Do NOT run `git remote remove origin`** -- worktrees share git remotes with the parent checkout, so it removes the remote everywhere. The remote is `origin` = `git@github.com:ethereum/ethglossary.git`. Push feature branches and open a pull request; never push to `main`.
 - **`pnpm install` from a worktree of a parent monorepo** will try to manage the parent's `node_modules`. Either rely on the empty `pnpm-workspace.yaml` (which already declares `packages: []` to isolate) or pass `--ignore-workspace` explicitly.
 
-## 10. Wrangler binds to `127.0.0.1` by default
+## 10. The dev server binds to `127.0.0.1` by default
 
-When SSH-tunneling for local dev, forward against `127.0.0.1`, not `localhost`. Some browsers (and some libraries) resolve `localhost` to `::1` (IPv6) which mismatches Wrangler's IPv4 bind and produces confusing "connection refused" errors.
+`src/server.ts` listens on `HOST` (default `127.0.0.1`) and `PORT` (default `8787`); the container sets `HOST=0.0.0.0`. When SSH-tunneling for local dev, forward against `127.0.0.1`, not `localhost`. Some browsers (and some libraries) resolve `localhost` to `::1` (IPv6) which mismatches the IPv4 bind and produces confusing "connection refused" errors.
 
 ```bash
 ssh -L 8787:127.0.0.1:8787 host          # right
@@ -131,7 +131,7 @@ Watch for breakage on Scalar version bumps. If the cast is no longer needed, rem
 
 ## 13. There is no Cloudflare account in the loop
 
-Never run `wrangler login` or `wrangler deploy`. Wrangler is only the local dev server behind `pnpm dev` and the type generator behind `pnpm run cf-typegen`. Production is a container built from `main` by `.github/workflows/docker.yml` and rolled out by devops; see AGENTS.md "Deploy to production".
+Wrangler is gone from the repo; do not add it back. The app is a plain Node server (`src/server.ts`), locally through `pnpm dev` and in production as a container built from `main` by `.github/workflows/docker.yml` and rolled out by devops; see AGENTS.md "Deploy to production".
 
 ## 14. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
 
