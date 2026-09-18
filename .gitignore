@@ -1,8 +1,5 @@
 node_modules/
 dist/
-.wrangler/
-.dev.vars
-worker-configuration.d.ts
 .worktrees/
 
 # Ad-hoc screenshots dropped in the worktree for review

@@ -111,9 +111,9 @@ pnpm run build
 # Type check (informational; the URL global error is pre-existing and unrelated)
 npx tsc --noEmit
 
-# Local smoke test (start the dev server, then curl)
-npx wrangler dev --port 8787 &
-sleep 5
+# Local smoke test (build, start the server, then curl)
+pnpm run build && node dist/server.js &
+sleep 2
 scripts/verify-deploy.sh http://127.0.0.1:8787
 ```
 

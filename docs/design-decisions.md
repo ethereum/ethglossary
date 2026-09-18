@@ -9,7 +9,7 @@ Load when tempted to introduce a new framework, dependency, storage layer, or to
 Reasoning:
 - Runtime-portable: the same app ran on Cloudflare Workers and now runs in a container on Ethereum Foundation infrastructure with no application code change. No Google/AWS dependency.
 - Zod schemas double as runtime validation and OpenAPI source. Auto-generated docs are a real win we lose if we migrate to Next.js, NestJS, or a framework with separate validation and docs systems.
-- TypeScript everywhere; no build step beyond what wrangler does.
+- TypeScript everywhere; esbuild bundles the server into a single file, Tailwind compiles the stylesheet.
 
 Do not migrate to Next.js or another framework without a strong reason. "I want server components" is not strong enough.
 

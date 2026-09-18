@@ -1,7 +1,7 @@
 /**
  * Glossary data loading and indexing.
  *
- * Loads JSON data at module scope (Workers bundle). Builds lookup
+ * Loads JSON data at module scope (bundled into the server). Builds lookup
  * indexes for term resolution and content filtering.
  */
 
