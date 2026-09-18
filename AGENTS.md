@@ -366,8 +366,9 @@ API serves.
   development). It is the only writer of `glossary_snapshots`, `entry_state`,
   `term_state` and `term_changes`. The first run records state and emits no
   change rows.
-- **Look at the data** with `pnpm run db:psql` locally. Production access is
-  through devops.
+- **Look at the data** locally with `pnpm run db:psql`, or `pnpm run db:ui`
+  for pgweb at `http://127.0.0.1:8081` (read-only; tunnel the port over SSH
+  like the dev server). Production access is through devops.
 - **Portability:** plain SQL, application-minted UUIDs, no extensions.
 
 ## Adding a glossary term

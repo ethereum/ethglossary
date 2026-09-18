@@ -12,9 +12,10 @@
     "bundle": "node scripts/build-server.mjs",
     "check": "tsc --noEmit",
     "db:up": "docker compose up -d postgres",
-    "db:down": "docker compose down",
+    "db:down": "docker compose --profile tools down",
     "db:psql": "docker compose exec postgres psql -U ethglossary ethglossary",
-    "check:uids": "node scripts/term-uid.mjs --check"
+    "check:uids": "node scripts/term-uid.mjs --check",
+    "db:ui": "docker compose --profile tools up -d"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

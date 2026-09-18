@@ -1,5 +1,11 @@
 # Local development only: the Postgres that DATABASE_URL in .env.example
-# points at. Production is a managed cluster run by devops.
+# points at, plus an optional browser for it. Production is a managed cluster
+# run by devops.
+#
+#   pnpm run db:up     start postgres
+#   pnpm run db:ui     also start pgweb on http://127.0.0.1:8081 (read-only)
+#   pnpm run db:psql   a psql shell
+#   pnpm run db:down   stop everything; add -v to drop the data too
 services:
   postgres:
     image: postgres:16
@@ -11,6 +17,27 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - ethglossary-postgres:/var/lib/postgresql/data
+    # A fresh volume takes a few seconds to initialize; anything that depends
+    # on postgres waits for this rather than racing it.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ethglossary -d ethglossary"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Browse tables and run SELECTs in a browser. Read-only on purpose: the
+  # app owns the schema and every write path.
+  pgweb:
+    image: sosedoff/pgweb
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["--readonly"]
+    environment:
+      PGWEB_DATABASE_URL: postgres://ethglossary:ethglossary@postgres:5432/ethglossary?sslmode=disable
+    ports:
+      - "127.0.0.1:8081:8081"
 
 volumes:
   ethglossary-postgres:
