@@ -23,6 +23,7 @@ ENV GIT_SHA=$GIT_SHA
 WORKDIR /app
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/migrations ./migrations
 EXPOSE 8787
 USER node
 CMD ["node", "dist/server.js"]
