@@ -394,11 +394,12 @@ API serves.
 
 ## Accounts and sign-in
 
-Signing in exists so a person can give feedback; it is not a profile. The
-only thing stored about a person is the provider's stable id (`users.provider`
-+ `users.subject`), plus an optional display name only they and the
-maintainers see, and a verified ENS name for wallets that have one. No
-passwords, no emails, no avatars. Everything lives under `src/auth/`, the
+Signing in exists so a person can give feedback; it is not a profile. What
+is stored about a person: the provider's stable id (`users.provider` +
+`users.subject`), the provider's handle at last sign-in (`users.handle`, so
+an export reads `octo-tester` rather than `424242`; null for wallets), an
+optional display name only they and the maintainers see, and a verified ENS
+name for wallets that have one. No passwords, no emails, no avatars. Everything lives under `src/auth/`, the
 routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
 `account.tsx`.
 
@@ -428,9 +429,11 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
 - **No database, no accounts:** `/signin` answers 503, the nav shows the
   inert "coming soon" button, and everything else is unchanged. Sign-in
   must never be a reason the glossary is down.
-- **Deleting an account** tombstones the row (subject, display name and ENS
-  nulled, `deleted_at` set) so feedback keeps an anonymous author; the person
-  can sign up again fresh. A ban (`banned_at`, set by hand) keeps the subject
+- **Deleting an account** tombstones the row (subject, handle, display name
+  and ENS nulled, `deleted_at` set) so feedback keeps an anonymous author
+  that still groups one account's contributions together. The person can
+  sign up again, but as a new account with no link to the old one; the copy
+  on `/account` says so. A ban (`banned_at`, set by hand) keeps the subject
   so that identity is refused at sign-in.
 - **Local development:** register your own GitHub OAuth App and Discord
   application with `http://localhost:8787/auth/<provider>/callback` as the

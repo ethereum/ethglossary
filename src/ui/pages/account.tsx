@@ -96,12 +96,14 @@ export const AccountPage = ({ user, saved, activeLang, url }: AccountPageProps) 
         method="post"
         action="/account/delete"
         class="flex flex-col gap-3"
-        onsubmit="return confirm('Delete your account? Your sign-in is removed and your feedback becomes anonymous. This cannot be undone.')"
+        onsubmit="return confirm('Delete your account? Your sign-in is removed and your feedback becomes anonymous. If you sign up again later it will be a new account with no link to anything you contributed before. This cannot be undone.')"
       >
         <p class={EYEBROW}>Delete account</p>
         <p class="text-body text-foreground-muted">
           Removes your sign-in and your display name. Feedback you have already given stays,
-          without any link to you. You can sign up again later as a new account.
+          without any link to you. This cannot be undone: if you sign in again later with the
+          same GitHub, Discord or wallet, you start as a new account, and nothing you
+          contributed before can be connected to it.
         </p>
         <button
           type="submit"

@@ -142,6 +142,7 @@ app.get("/auth/:provider/callback", async (c) => {
   try {
     const identity = await finishOAuth(sql, c, provider)
     const user = await findOrCreateUser(sql, provider.id, identity.subject, {
+      handle: identity.handle,
       displayName: identity.handle,
       ensName: null,
     })
@@ -181,6 +182,7 @@ app.post("/auth/siwe/verify", async (c) => {
       String(body.signature ?? "")
     )
     const user = await findOrCreateUser(sql, "siwe", identity.address.toLowerCase(), {
+      handle: null,
       displayName: identity.ensName ?? shortAddress(identity.address),
       ensName: identity.ensName,
     })

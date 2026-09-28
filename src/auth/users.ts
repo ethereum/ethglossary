@@ -14,6 +14,8 @@ export interface UserRow {
   id: string
   provider: string
   subject: string | null
+  /** The provider's human handle at last sign-in; null for wallets. */
+  handle: string | null
   display_name: string | null
   ens_name: string | null
   created_at: Date
@@ -55,27 +57,25 @@ export async function findOrCreateUser(
   sql: Sql,
   provider: string,
   subject: string,
-  defaults: { displayName: string | null; ensName: string | null }
+  identity: { handle: string | null; displayName: string | null; ensName: string | null }
 ): Promise<UserRow> {
+  const handle = cleanDisplayName(identity.handle)
   const existing = await sql<UserRow[]>`
     SELECT * FROM users WHERE provider = ${provider} AND subject = ${subject}`
   const found = existing[0]
   if (found) {
     if (found.banned_at) throw new AccountBannedError()
-    // ENS is re-verified on every SIWE sign-in and may have changed or gone.
-    if (provider === "siwe" && found.ens_name !== defaults.ensName) {
-      const updated = await sql<UserRow[]>`
-        UPDATE users SET ens_name = ${defaults.ensName}, last_seen_at = now()
-        WHERE id = ${found.id} RETURNING *`
-      return updated[0]
-    }
-    await sql`UPDATE users SET last_seen_at = now() WHERE id = ${found.id}`
-    return found
+    // The handle and the ENS name are what the provider says today, not what
+    // it said at sign-up: logins get renamed, ENS records change hands.
+    const updated = await sql<UserRow[]>`
+      UPDATE users SET handle = ${handle}, ens_name = ${identity.ensName}, last_seen_at = now()
+      WHERE id = ${found.id} RETURNING *`
+    return updated[0]
   }
 
   const created = await sql<UserRow[]>`
-    INSERT INTO users (id, provider, subject, display_name, ens_name)
-    VALUES (${randomUUID()}, ${provider}, ${subject}, ${cleanDisplayName(defaults.displayName)}, ${defaults.ensName})
+    INSERT INTO users (id, provider, subject, handle, display_name, ens_name)
+    VALUES (${randomUUID()}, ${provider}, ${subject}, ${handle}, ${cleanDisplayName(identity.displayName)}, ${identity.ensName})
     RETURNING *`
   return created[0]
 }
@@ -97,7 +97,7 @@ export async function deleteAccount(sql: Sql, id: string): Promise<void> {
   await sql.begin(async (tx) => {
     await tx`DELETE FROM sessions WHERE user_id = ${id}`
     await tx`
-      UPDATE users SET subject = NULL, display_name = NULL, ens_name = NULL, deleted_at = now()
+      UPDATE users SET subject = NULL, handle = NULL, display_name = NULL, ens_name = NULL, deleted_at = now()
       WHERE id = ${id}`
   })
 }
