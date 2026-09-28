@@ -5,28 +5,26 @@
  * exact string a reviewer saw. So a vote or suggestion is stored against the
  * hash of that value, and "is this feedback about what is live right now" is
  * answered by hashing the bundled data at request time and comparing. The
- * scheduled indexer (src/lib/indexer.ts) uses the same functions to notice
- * what a deploy changed.
+ * startup indexer (src/lib/indexer.ts) uses the same functions to notice what
+ * a deploy changed.
  *
  * SHA-256, hex, first 32 characters. Truncation keeps rows small; 128 bits is
- * far beyond what collision resistance needs here.
+ * far beyond what collision resistance needs here. Synchronous on purpose:
+ * the indexer hashes tens of thousands of short strings, and Node's native
+ * hash does that in well under a second without a single event-loop hop.
  */
 
+import { createHash } from "node:crypto"
 import type { GlossaryTerm, TranslationEntry } from "./glossary-data"
 import { applicableContexts, slotValue } from "./context-types"
 import type { ContextId } from "./context-types"
 
-const encoder = new TextEncoder()
-
-export async function sha256Hex32(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(input))
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 32)
+export function sha256Hex32(input: string): string {
+  return createHash("sha256").update(input, "utf8").digest("hex").slice(0, 32)
 }
 
 /** Hash of one translation slot, or null when the slot is not populated. */
-export async function slotHash(entry: TranslationEntry, context: ContextId): Promise<string | null> {
+export function slotHash(entry: TranslationEntry, context: ContextId): string | null {
   const value = slotValue(entry, context)
   return value === null ? null : sha256Hex32(value)
 }
@@ -36,24 +34,28 @@ export async function slotHash(entry: TranslationEntry, context: ContextId): Pro
  * `values` is what the indexer stores so the History rail can show what a
  * slot used to say.
  */
-export async function slotDigest(
-  entry: TranslationEntry
-): Promise<{ hashes: Record<string, string>; values: Record<string, string> }> {
+export function slotDigest(entry: TranslationEntry): {
+  hashes: Record<string, string>
+  values: Record<string, string>
+} {
   const hashes: Record<string, string> = {}
   const values: Record<string, string> = {}
   for (const context of applicableContexts(entry)) {
     const value = slotValue(entry, context)
     if (value === null) continue
     values[context] = value
-    hashes[context] = await sha256Hex32(value)
+    hashes[context] = sha256Hex32(value)
   }
   return { hashes, values }
 }
 
 /**
- * The master fields a reader can give feedback on. Counters and pipeline
- * bookkeeping (`content_occurrences`, `content_files`, `intl_keys`, `sources`)
- * are deliberately excluded: they change without the term changing.
+ * The master fields a reader can give feedback on.
+ *
+ * Excluded on purpose: pipeline counters (`content_occurrences`,
+ * `content_files`, `intl_keys`, `sources`), which move without the term
+ * changing, and the ethereum.org display flags (`has_tooltip`,
+ * `in_glossary`), which are not something a reader reviews.
  */
 export function termFields(term: GlossaryTerm): Record<string, unknown> {
   return {
@@ -64,6 +66,7 @@ export function termFields(term: GlossaryTerm): Record<string, unknown> {
     aliases: term.aliases,
     casing: term.casing,
     note: term.note,
+    translation_note: term.translation_note,
     script_rule: term.script_rule,
     term_role: term.term_role,
     category: term.category,
@@ -82,6 +85,6 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
-export async function termHash(term: GlossaryTerm): Promise<string> {
+export function termHash(term: GlossaryTerm): string {
   return sha256Hex32(canonicalJson(termFields(term)))
 }

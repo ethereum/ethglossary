@@ -28,7 +28,7 @@ services:
   # Browse tables and run SELECTs in a browser. Read-only on purpose: the
   # app owns the schema and every write path.
   pgweb:
-    image: sosedoff/pgweb
+    image: sosedoff/pgweb:0.17.0
     profiles: ["tools"]
     depends_on:
       postgres:

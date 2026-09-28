@@ -42,6 +42,7 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── docker-compose.yml               # local Postgres for development (pnpm run db:up)
 ├── migrations/                      # Postgres schema, append-only .sql; see "Database"
 ├── .github/workflows/docker.yml     # builds and publishes the image on push to main
+├── .github/workflows/ci.yml         # type check, uid check, bundle -- on every pull request
 ├── docs/
 │   ├── api-spec.md                  # internal planning spec
 │   ├── data-shape.md                # GlossaryTerm / TranslationEntry shapes; script_rule reconciliation
@@ -353,7 +354,9 @@ API serves.
 - **Schema** is `migrations/NNNN_label.sql`, append-only. Never edit a file
   that has shipped; add the next number. `src/db/migrate.ts` applies pending
   files at startup, before the server listens, under an advisory lock so
-  replicas do not race. Nothing to run by hand, in any environment.
+  replicas do not race. Waits are bounded (`DB_STARTUP_TIMEOUT`, default 60
+  s); past that the boot gives up on the database and serves without it.
+  Nothing to run by hand, in any environment.
 - **Every master entry has a `uid`** (`scripts/term-uid.mjs`). Feedback and
   history key on it, never on the canonical name or the `id` slug, because
   both of those change on rename. `pnpm run check:uids` verifies the data.
@@ -361,11 +364,17 @@ API serves.
   `src/lib/hash.ts` hash the exact value a reviewer saw; whether feedback is
   about the live value is decided by re-hashing the bundled data at request
   time, never by reading a table.
-- **`src/lib/indexer.ts` runs once at startup** and records what this build
-  changed against the previous one, keyed on `GIT_SHA` (a content hash in
-  development). It is the only writer of `glossary_snapshots`, `entry_state`,
-  `term_state` and `term_changes`. The first run records state and emits no
-  change rows.
+- **`src/lib/indexer.ts` runs once at startup**, after the server is
+  listening. It hashes the bundled glossary, compares it with the recorded
+  state, and writes a snapshot plus one `term_changes` row per difference.
+  It never trusts a build identifier, so redeploying an older image records
+  the rollback instead of skipping it, and a boot that finds nothing
+  different writes nothing. It is the only writer of `glossary_snapshots`,
+  `entry_state`, `term_state` and `term_changes`. The first run records
+  state and emits no change rows.
+- **A missing or duplicated `uid` fails the image build and the CI check**,
+  because the data module refuses to load without one. Run `pnpm run check`
+  and `pnpm run check:uids` before opening a PR.
 - **Look at the data** locally with `pnpm run db:psql`, or `pnpm run db:ui`
   for pgweb at `http://127.0.0.1:8081` (read-only; tunnel the port over SSH
   like the dev server). Production access is through devops.

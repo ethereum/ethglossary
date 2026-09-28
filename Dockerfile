@@ -10,7 +10,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm run build
+# A type error or a missing term uid fails here, not as a crash loop after rollout.
+RUN pnpm run check && pnpm run check:uids && pnpm run build
 
 # ---- runtime: node, the bundle and the static assets. No package manager,
 # no node_modules; dist/server.js carries every dependency.

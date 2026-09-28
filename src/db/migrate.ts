@@ -12,10 +12,15 @@
  * it races on the catalog and one side fails with a duplicate-key error.
  * PostgreSQL DDL is transactional, so a failing file leaves the database as
  * it was.
+ *
+ * Waits are bounded. A replica must never sit at boot forever behind a lock
+ * held by a stalled peer or a statement that will not finish; past the limits
+ * below the caller treats the database as unavailable and serves without it.
  */
 
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import type { Sql } from "./client"
 
 /** Arbitrary constant; only has to differ from the indexer's lock. */
@@ -23,10 +28,35 @@ const LOCK_KEY = 0x6d696772 // "migr"
 
 const FILE_SHAPE = /^\d{4}_[a-z0-9_-]+\.sql$/
 
-export async function migrate(sql: Sql, dir = "migrations"): Promise<string[]> {
-  const files = (await readdir(dir)).filter((f) => FILE_SHAPE.test(f)).sort()
+/**
+ * `migrations/` beside `dist/`: `/app/migrations` in the image and
+ * `<repo>/migrations` in development, wherever the process was started from.
+ */
+export const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url))
+
+/**
+ * The migration files themselves are missing or unreadable. That is a build
+ * problem, not a database outage, and the log should say so.
+ */
+export class MigrationFilesError extends Error {
+  constructor(dir: string, cause: string) {
+    super(`migration files unreadable at ${dir}: ${cause}`)
+    this.name = "MigrationFilesError"
+  }
+}
+
+export async function migrate(sql: Sql, dir = MIGRATIONS_DIR): Promise<string[]> {
+  let files: string[]
+  try {
+    files = (await readdir(dir)).filter((f) => FILE_SHAPE.test(f)).sort()
+  } catch (err) {
+    throw new MigrationFilesError(dir, (err as Error).message)
+  }
+  if (files.length === 0) throw new MigrationFilesError(dir, "no migration files found")
 
   return sql.begin(async (tx): Promise<string[]> => {
+    await tx.unsafe("SET LOCAL lock_timeout = '30s'")
+    await tx.unsafe("SET LOCAL statement_timeout = '300s'")
     await tx`SELECT pg_advisory_xact_lock(${LOCK_KEY})`
     await tx`
       CREATE TABLE IF NOT EXISTS schema_migrations (

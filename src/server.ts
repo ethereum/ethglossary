@@ -13,7 +13,8 @@ import { serve } from "@hono/node-server"
 import { serveStatic } from "@hono/node-server/serve-static"
 import app from "./index"
 import { closeDatabase, openDatabase } from "./db/client"
-import { migrate } from "./db/migrate"
+import type { Sql } from "./db/client"
+import { migrate, MigrationFilesError } from "./db/migrate"
 import { describeBuild, runIndexer } from "./lib/indexer"
 
 const port = Number(process.env.PORT ?? 8787)
@@ -46,17 +47,43 @@ app.get("/healthz", (c) => {
  * The feedback store is optional. Without DATABASE_URL the site is the
  * read-only glossary it always was. With it, the schema is brought up to date
  * before the server listens, and the change indexer runs once the server is
- * up. A database that cannot be reached is logged and the site still serves:
- * the glossary API is the critical path, feedback is not.
+ * up. Anything that goes wrong here -- an unparseable URL, an unreachable
+ * host, a lock that never frees, a build missing its migration files -- is
+ * logged and the site still serves. The glossary API is the critical path;
+ * feedback is not.
+ *
+ * DB_STARTUP_TIMEOUT (seconds, default 60) bounds how long a boot may wait on
+ * the database before giving up on it for this process.
  */
-let db = process.env.DATABASE_URL ? openDatabase(process.env.DATABASE_URL) : null
-if (db) {
+const startupBudgetMs = Number(process.env.DB_STARTUP_TIMEOUT ?? 60) * 1000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000}s`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
+
+let db: Sql | null = null
+if (process.env.DATABASE_URL) {
   try {
-    const applied = await migrate(db)
+    db = openDatabase(process.env.DATABASE_URL)
+    const applied = await withTimeout(migrate(db), startupBudgetMs, "schema migration")
     console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
   } catch (err) {
-    console.error("database unavailable, serving without feedback features:", (err as Error).message)
-    await closeDatabase()
+    const message = err instanceof Error ? err.message : String(err)
+    const reason = err instanceof MigrationFilesError ? `build problem: ${message}` : `database unavailable: ${message}`
+    console.error(`${reason}; serving without feedback features`)
+    await closeDatabase(1)
     db = null
   }
 } else {
@@ -78,19 +105,18 @@ if (db) {
       const detail = r.status === "indexed" ? ` (${r.first ? "first run, " : ""}${r.changes} changes)` : ""
       console.log(`indexer: ${r.status}${detail}`)
     })
-    .catch((err) => console.error("indexer failed:", err))
+    .catch((err) => console.error("indexer failed:", err instanceof Error ? err.message : err))
 }
 
 /*
  * A rollout sends SIGTERM and waits. Stop accepting connections, let in-flight
- * requests finish, then exit; if something hangs, leave anyway before the
- * orchestrator's grace period runs out.
+ * requests finish, close the pool, then exit; if something hangs, leave anyway
+ * before the orchestrator's grace period runs out.
  */
 const shutdown = (signal: string) => {
   console.log(`${signal} received, shutting down`)
   server.close(() => {
-    const closeDb = db ? db.end({ timeout: 5 }) : Promise.resolve()
-    void closeDb.finally(() => process.exit(0))
+    void closeDatabase(5).finally(() => process.exit(0))
   })
   setTimeout(() => process.exit(1), 10_000).unref()
 }

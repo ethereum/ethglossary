@@ -1,0 +1,32 @@
+name: ci
+
+# The checks the image build also runs, surfaced on the pull request so a
+# missing term uid or a type error is a red check rather than a container
+# that crash-loops after merge.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run check:uids
+      - run: pnpm run bundle

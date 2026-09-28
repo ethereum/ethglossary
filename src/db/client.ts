@@ -31,12 +31,13 @@ export function getDb(): Sql | null {
 }
 
 /**
- * Give up on the database for this process. Used when startup cannot reach
- * it: every feature that needs a database then sees getDb() === null and
- * degrades cleanly instead of failing request by request.
+ * Give up the database for this process. At startup, when it cannot be
+ * reached, every feature that needs it then sees getDb() === null and
+ * degrades cleanly instead of failing request by request. At shutdown, it
+ * lets in-flight statements finish for up to `timeoutSeconds`.
  */
-export async function closeDatabase(): Promise<void> {
+export async function closeDatabase(timeoutSeconds = 5): Promise<void> {
   const current = db
   db = null
-  if (current) await current.end({ timeout: 1 }).catch(() => {})
+  if (current) await current.end({ timeout: timeoutSeconds }).catch(() => {})
 }

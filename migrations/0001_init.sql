@@ -47,10 +47,12 @@ CREATE INDEX sessions_user    ON sessions (user_id);
 CREATE INDEX sessions_expires ON sessions (expires_at);
 
 -- Short-lived, single-use values a sign-in flow has to remember between two
--- requests: the SIWE nonce, the OAuth state. id IS the nonce/state. Rows are
--- deleted on use and swept by expiry.
+-- requests: the SIWE nonce, the OAuth state. Only the SHA-256 of the value is
+-- stored, for the same reason sessions store a hash: a read of this table
+-- must not hand anyone a live challenge. Rows are deleted on use and swept by
+-- expiry.
 CREATE TABLE auth_challenges (
-  id          text PRIMARY KEY,
+  challenge_hash  text PRIMARY KEY,
   kind        text NOT NULL CHECK (kind IN ('siwe_nonce', 'oauth_state')),
   provider    text CHECK (provider IN ('siwe', 'github', 'discord')),
   -- Same-origin path to return to after sign-in. Validated as a path on the
@@ -63,22 +65,26 @@ CREATE INDEX auth_challenges_expires ON auth_challenges (expires_at);
 
 -- ---------------------------------------------------- glossary versioning
 
--- One row per deployed build the indexer has seen. version_id is the image's
--- git SHA in production and a content hash of the bundled data in development.
+-- One row per index pass that found something to record: the first ever, and
+-- every boot after which the bundled glossary differed from the recorded
+-- state. version_id is informational -- the image's git SHA in production, a
+-- content hash in development -- and deliberately not unique: redeploying an
+-- older image is a real change to what is live and gets its own row.
 CREATE TABLE glossary_snapshots (
   id            text PRIMARY KEY,
-  version_id    text NOT NULL UNIQUE,
+  version_id    text NOT NULL,
   git_sha       text,
   deployed_at   timestamptz NOT NULL,
   term_count    integer NOT NULL,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  completed_at  timestamptz
+  change_count  integer NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- What the glossary looked like the last time the indexer ran: one row per
+-- What the glossary looks like as of the last recorded change: one row per
 -- (term, language) holding that entry's slot hashes and values keyed by
 -- context. The indexer diffs the bundled data against this to produce
--- term_changes, then overwrites it.
+-- term_changes, then rewrites the rows that moved. snapshot_id is the pass
+-- that last changed the row.
 CREATE TABLE entry_state (
   term_uid     text NOT NULL,
   lang         text NOT NULL,
