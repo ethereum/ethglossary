@@ -24,6 +24,7 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
 - **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
 - **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
+- **pnpm**, pinned once in the `packageManager` field of `package.json`; CI reads it and the Dockerfile installs the same version
 - **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
 Auto-generated OpenAPI from the same Zod schemas used for runtime validation is a real win. Do not migrate to Next.js or another framework without strong reason. See `docs/design-decisions.md` if tempted.
@@ -354,8 +355,11 @@ API serves.
 - **Schema** is `migrations/NNNN_label.sql`, append-only. Never edit a file
   that has shipped; add the next number. `src/db/migrate.ts` applies pending
   files at startup, before the server listens, under an advisory lock so
-  replicas do not race. Waits are bounded (`DB_STARTUP_TIMEOUT`, default 60
-  s); past that the boot gives up on the database and serves without it.
+  replicas do not race. Waits are bounded by `DB_STARTUP_TIMEOUT` (whole
+  seconds, default 60); past that the boot gives up on the database and
+  serves without it. **That budget is also the ceiling on a migration's run
+  time.** Migration files change the schema and finish in seconds; anything
+  that touches many rows is a script or a startup task, never a migration.
   Nothing to run by hand, in any environment.
 - **Every master entry has a `uid`** (`scripts/term-uid.mjs`). Feedback and
   history key on it, never on the canonical name or the `id` slug, because
@@ -371,10 +375,14 @@ API serves.
   the rollback instead of skipping it, and a boot that finds nothing
   different writes nothing. It is the only writer of `glossary_snapshots`,
   `entry_state`, `term_state` and `term_changes`. The first run records
-  state and emits no change rows.
+  state and emits no change rows. Known limitation: an old-image pod that
+  restarts during a partial rollout is indistinguishable from a rollback and
+  records one; the Versions rail should collapse inverse snapshots minutes
+  apart.
 - **A missing or duplicated `uid` fails the image build and the CI check**,
   because the data module refuses to load without one. Run `pnpm run check`
-  and `pnpm run check:uids` before opening a PR.
+  and `pnpm run check:uids` before opening a PR. CI also rebuilds the
+  stylesheet and font subsets and fails if the committed copies are stale.
 - **Look at the data** locally with `pnpm run db:psql`, or `pnpm run db:ui`
   for pgweb at `http://127.0.0.1:8081` (read-only; tunnel the port over SSH
   like the dev server). Production access is through devops.

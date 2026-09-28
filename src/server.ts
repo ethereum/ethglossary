@@ -52,10 +52,22 @@ app.get("/healthz", (c) => {
  * logged and the site still serves. The glossary API is the critical path;
  * feedback is not.
  *
- * DB_STARTUP_TIMEOUT (seconds, default 60) bounds how long a boot may wait on
- * the database before giving up on it for this process.
+ * DB_STARTUP_TIMEOUT (whole seconds, default 60, minimum 5) bounds how long
+ * a boot may wait on the database before giving up on it for this process.
+ * It is also the ceiling on how long a migration may run; see
+ * src/db/migrate.ts for why migrations are expected to be fast.
  */
-const startupBudgetMs = Number(process.env.DB_STARTUP_TIMEOUT ?? 60) * 1000
+function startupBudgetMs(): number {
+  const raw = process.env.DB_STARTUP_TIMEOUT
+  if (raw === undefined || raw === "") return 60_000
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds < 5) {
+    console.warn(`ignoring DB_STARTUP_TIMEOUT=${JSON.stringify(raw)}: expected whole seconds, at least 5; using 60`)
+    return 60_000
+  }
+  return Math.floor(seconds) * 1000
+}
+const budgetMs = startupBudgetMs()
 
 function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -77,7 +89,9 @@ let db: Sql | null = null
 if (process.env.DATABASE_URL) {
   try {
     db = openDatabase(process.env.DATABASE_URL)
-    const applied = await withTimeout(migrate(db), startupBudgetMs, "schema migration")
+    // The database enforces the budget itself through lock and statement
+    // timeouts; the outer timer sits just past it as the backstop.
+    const applied = await withTimeout(migrate(db, { budgetMs }), budgetMs + 5_000, "schema migration")
     console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

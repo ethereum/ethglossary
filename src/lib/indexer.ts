@@ -21,6 +21,13 @@
  * The first run ever records the current state and emits no change rows.
  * History starts at the first indexed deploy by design.
  *
+ * Known limitation: the indexer cannot tell a deliberate rollback from an
+ * old-image pod that restarts during a partial rollout. Both boot content
+ * that differs from the recorded state, and both are recorded. The result
+ * is a pair of inverse snapshots minutes apart; the Versions rail should
+ * collapse such pairs rather than show them, and nothing on the request path
+ * is affected either way.
+ *
  * Nothing on the request path reads the tables this writes. Whether a vote
  * is about the live value is always decided by hashing the bundled data, so
  * a late or failed index run can never make the site wrong.
@@ -163,7 +170,7 @@ export async function runIndexer(sql: Sql, build: BuildInfo): Promise<IndexerRes
     // ------------------------------------------------------------ master
     const prevTerms = new Map(storedTerms.map((r) => [r.term_uid, r]))
     const dirtyTerms: TermRow[] = []
-    /** (uid, hash): versions of this term other than `hash` are no longer live. "" means all. */
+    /** (uid, hash): `hash` is the live version of this term, every other one is not. "" retires all. */
     const supersededTerms: Array<[string, string]> = []
 
     for (const t of current.terms) {
@@ -201,7 +208,7 @@ export async function runIndexer(sql: Sql, build: BuildInfo): Promise<IndexerRes
     const entryKey = (lang: string, uid: string) => `${lang}::${uid}`
     const prevEntries = new Map(storedEntries.map((r) => [entryKey(r.lang, r.term_uid), r]))
     const dirtyEntries: EntryRow[] = []
-    /** (uid, lang, context, hash): other versions of the slot are no longer live. "" means all. */
+    /** (uid, lang, context, hash): `hash` is the live version of the slot, every other one is not. "" retires all. */
     const supersededSlots: Array<[string, string, string, string]> = []
 
     for (const e of current.entries) {
@@ -298,23 +305,28 @@ export async function runIndexer(sql: Sql, build: BuildInfo): Promise<IndexerRes
                     ${rows.map((r) => r.new_value)}::text[]) AS x(i, u, l, c, k, o, n)`
     }
 
-    // Versions of a slot or term that are no longer live stop counting as
-    // current in exports. A hash of "" matches every version.
+    // Bring `superseded_at` in line with what is live: the version whose hash
+    // matches the current value is live (a restored value comes back to
+    // life), every other version of that slot or term is not. A hash of ""
+    // matches nothing, so it retires every version. Only rows whose state is
+    // wrong are touched.
     for (const rows of chunks(supersededSlots)) {
       await tx`
-        UPDATE slot_versions s SET superseded_at = now()
+        UPDATE slot_versions s
+        SET superseded_at = CASE WHEN s.value_hash = x.h THEN NULL ELSE COALESCE(s.superseded_at, now()) END
         FROM unnest(${rows.map((r) => r[0])}::text[],
                     ${rows.map((r) => r[1])}::text[],
                     ${rows.map((r) => r[2])}::text[],
                     ${rows.map((r) => r[3])}::text[]) AS x(u, l, c, h)
         WHERE s.term_uid = x.u AND s.lang = x.l AND s.context = x.c
-          AND s.value_hash <> x.h AND s.superseded_at IS NULL`
+          AND (s.value_hash = x.h) <> (s.superseded_at IS NULL)`
     }
     for (const rows of chunks(supersededTerms)) {
       await tx`
-        UPDATE term_versions t SET superseded_at = now()
+        UPDATE term_versions t
+        SET superseded_at = CASE WHEN t.fields_hash = x.h THEN NULL ELSE COALESCE(t.superseded_at, now()) END
         FROM unnest(${rows.map((r) => r[0])}::text[], ${rows.map((r) => r[1])}::text[]) AS x(u, h)
-        WHERE t.term_uid = x.u AND t.fields_hash <> x.h AND t.superseded_at IS NULL`
+        WHERE t.term_uid = x.u AND (t.fields_hash = x.h) <> (t.superseded_at IS NULL)`
     }
 
     return { status: "indexed", first: firstRun, changes: changes.length }

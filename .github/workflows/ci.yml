@@ -2,7 +2,8 @@ name: ci
 
 # The checks the image build also runs, surfaced on the pull request so a
 # missing term uid or a type error is a red check rather than a container
-# that crash-loops after merge.
+# that crash-loops after merge -- plus a check that the committed build
+# outputs are current.
 on:
   pull_request:
   push:
@@ -17,9 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from the packageManager field in package.json, the same
+      # one the Dockerfile installs.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -30,3 +31,7 @@ jobs:
       - run: pnpm run check
       - run: pnpm run check:uids
       - run: pnpm run bundle
+      # The stylesheet and font subsets are build outputs that are committed
+      # so a clone renders. Rebuild them and fail if the commit is stale.
+      - run: pnpm run build:assets
+      - run: git diff --exit-code --stat -- public src/ui/fonts.css

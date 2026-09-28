@@ -1,6 +1,7 @@
 {
   "name": "ethglossary",
   "version": "0.3.0",
+  "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
     "dev": "pnpm run build:assets && node scripts/dev.mjs",

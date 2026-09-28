@@ -13,9 +13,19 @@
  * PostgreSQL DDL is transactional, so a failing file leaves the database as
  * it was.
  *
- * Waits are bounded. A replica must never sit at boot forever behind a lock
- * held by a stalled peer or a statement that will not finish; past the limits
- * below the caller treats the database as unavailable and serves without it.
+ * Waits are bounded by one budget, `budgetMs`, that the caller also uses for
+ * its own timer: the lock wait gets up to half of it (capped at 30 s) and
+ * every statement the rest. A replica must never sit at boot forever behind
+ * a stalled peer or a statement that will not finish; past the budget the
+ * caller treats the database as unavailable and serves without it.
+ *
+ * That makes the budget a ceiling on how long a migration may run, and it is
+ * meant to be one. Migration files change the schema and finish in seconds.
+ * Anything that has to touch many rows -- a backfill, a rebuild of derived
+ * data -- is a script or a startup task with its own pacing, never a
+ * migration, because a file that cannot finish inside the budget fails on
+ * every replica identically and leaves feedback off until someone raises
+ * DB_STARTUP_TIMEOUT for that deploy.
  */
 
 import { readdir, readFile } from "node:fs/promises"
@@ -45,7 +55,17 @@ export class MigrationFilesError extends Error {
   }
 }
 
-export async function migrate(sql: Sql, dir = MIGRATIONS_DIR): Promise<string[]> {
+export interface MigrateOptions {
+  dir?: string
+  /** Upper bound on the whole run; also caps lock and statement waits. */
+  budgetMs?: number
+}
+
+export async function migrate(sql: Sql, options: MigrateOptions = {}): Promise<string[]> {
+  const dir = options.dir ?? MIGRATIONS_DIR
+  const budgetSeconds = Math.max(5, Math.floor((options.budgetMs ?? 60_000) / 1000))
+  const lockSeconds = Math.min(30, Math.max(1, Math.floor(budgetSeconds / 2)))
+
   let files: string[]
   try {
     files = (await readdir(dir)).filter((f) => FILE_SHAPE.test(f)).sort()
@@ -55,8 +75,8 @@ export async function migrate(sql: Sql, dir = MIGRATIONS_DIR): Promise<string[]>
   if (files.length === 0) throw new MigrationFilesError(dir, "no migration files found")
 
   return sql.begin(async (tx): Promise<string[]> => {
-    await tx.unsafe("SET LOCAL lock_timeout = '30s'")
-    await tx.unsafe("SET LOCAL statement_timeout = '300s'")
+    await tx.unsafe(`SET LOCAL lock_timeout = '${lockSeconds}s'`)
+    await tx.unsafe(`SET LOCAL statement_timeout = '${budgetSeconds}s'`)
     await tx`SELECT pg_advisory_xact_lock(${LOCK_KEY})`
     await tx`
       CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -84,11 +84,12 @@ CREATE TABLE glossary_snapshots (
 -- (term, language) holding that entry's slot hashes and values keyed by
 -- context. The indexer diffs the bundled data against this to produce
 -- term_changes, then rewrites the rows that moved. snapshot_id is the pass
--- that last changed the row.
+-- that last changed the row; informational, so pruning an old snapshot just
+-- nulls it here while term_changes below cascade away with the snapshot.
 CREATE TABLE entry_state (
   term_uid     text NOT NULL,
   lang         text NOT NULL,
-  snapshot_id  text NOT NULL REFERENCES glossary_snapshots(id),
+  snapshot_id  text REFERENCES glossary_snapshots(id) ON DELETE SET NULL,
   slot_hashes  jsonb NOT NULL,
   slot_values  jsonb NOT NULL,
   PRIMARY KEY (term_uid, lang)
@@ -98,7 +99,7 @@ CREATE TABLE entry_state (
 -- feedback on, plus the canonical term so a rename can be reported.
 CREATE TABLE term_state (
   term_uid     text PRIMARY KEY,
-  snapshot_id  text NOT NULL REFERENCES glossary_snapshots(id),
+  snapshot_id  text REFERENCES glossary_snapshots(id) ON DELETE SET NULL,
   fields_hash  text NOT NULL,
   term         text NOT NULL
 );
