@@ -32,6 +32,15 @@ jobs:
       - run: pnpm run check:uids
       - run: pnpm run bundle
       # The stylesheet and font subsets are build outputs that are committed
-      # so a clone renders. Rebuild them and fail if the commit is stale.
+      # so a clone renders. Rebuild them and fail if the commit is stale or
+      # if the build produced a file nobody committed (git diff alone would
+      # miss an untracked font).
       - run: pnpm run build:assets
-      - run: git diff --exit-code --stat -- public src/ui/fonts.css
+      - name: committed build outputs are current
+        run: |
+          drift=$(git status --porcelain -uall -- public src/ui/fonts.css)
+          if [ -n "$drift" ]; then
+            echo "Build outputs differ from the commit. Run 'pnpm run build:assets' and commit the result:"
+            echo "$drift"
+            exit 1
+          fi

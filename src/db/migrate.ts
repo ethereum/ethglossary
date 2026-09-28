@@ -13,11 +13,12 @@
  * PostgreSQL DDL is transactional, so a failing file leaves the database as
  * it was.
  *
- * Waits are bounded by one budget, `budgetMs`, that the caller also uses for
- * its own timer: the lock wait gets up to half of it (capped at 30 s) and
- * every statement the rest. A replica must never sit at boot forever behind
- * a stalled peer or a statement that will not finish; past the budget the
- * caller treats the database as unavailable and serves without it.
+ * Waits are bounded by one budget, `budgetMs`: the lock wait gets up to half
+ * of it (capped at 30 s), no single statement may exceed it, and the caller's
+ * own timer sits just past it as the backstop for the whole run. A replica
+ * must never sit at boot forever behind a stalled peer or a statement that
+ * will not finish; past the budget the caller treats the database as
+ * unavailable and serves without it.
  *
  * That makes the budget a ceiling on how long a migration may run, and it is
  * meant to be one. Migration files change the schema and finish in seconds.

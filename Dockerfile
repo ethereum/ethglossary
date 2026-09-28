@@ -2,10 +2,10 @@
 
 # ---- build: install everything, compile fonts and css, bundle the server
 FROM node:22-slim AS build
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
 ENV CI=true
-RUN npm install -g pnpm@10.34.5
+# pnpm's version comes from the packageManager field in package.json, the
+# same place CI reads it; corepack fetches exactly that one.
+RUN corepack enable pnpm
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile

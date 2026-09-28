@@ -24,7 +24,7 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
 - **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
 - **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
-- **pnpm**, pinned once in the `packageManager` field of `package.json`; CI reads it and the Dockerfile installs the same version
+- **pnpm**, pinned once in the `packageManager` field of `package.json`; CI and the Dockerfile (through corepack) both read it from there
 - **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
 Auto-generated OpenAPI from the same Zod schemas used for runtime validation is a real win. Do not migrate to Next.js or another framework without strong reason. See `docs/design-decisions.md` if tempted.
