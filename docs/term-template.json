@@ -1,7 +1,8 @@
 {
-  "_comment_remove_before_committing": "Template for a new GlossaryTerm entry in src/data/glossary-terms-enhanced.json. The master key (e.g. 'rollup-as-a-service') is the canonical term name, lowercased and matching the 'term' field. Delete this _comment field and rename the key to your canonical term before adding to the data file. Load docs/data-shape.md for field semantics and docs/translation-policy.md for picking script_rule. 'references' is optional -- omit the field entirely rather than emitting an empty array, and never put markup links in 'definition'.",
+  "_comment_remove_before_committing": "Template for a new GlossaryTerm entry in src/data/glossary-terms-enhanced.json. The master key (e.g. 'rollup-as-a-service') is the canonical term name, lowercased and matching the 'term' field. Delete this _comment field and rename the key to your canonical term before adding to the data file. Replace the 'uid' placeholder with the output of `node scripts/term-uid.mjs`; a uid is minted once and never changes. Load docs/data-shape.md for field semantics and docs/translation-policy.md for picking script_rule. 'references' is optional -- omit the field entirely rather than emitting an empty array, and never put markup links in 'definition'.",
   "rollup-as-a-service": {
     "id": "rollup-as-a-service",
+    "uid": "REPLACE-WITH: node scripts/term-uid.mjs",
     "term": "rollup-as-a-service",
     "category": "scaling",
     "definition": "A managed service that lets teams launch and operate rollups without running the full infrastructure themselves.",

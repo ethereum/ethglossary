@@ -12,6 +12,10 @@
 import { serve } from "@hono/node-server"
 import { serveStatic } from "@hono/node-server/serve-static"
 import app from "./index"
+import { closeDatabase, openDatabase } from "./db/client"
+import type { Sql } from "./db/client"
+import { migrate, MigrationFilesError } from "./db/migrate"
+import { describeBuild, runIndexer } from "./lib/indexer"
 
 const port = Number(process.env.PORT ?? 8787)
 // Loopback by default so a laptop is not listening on every interface; the
@@ -39,6 +43,67 @@ app.get("/healthz", (c) => {
   return c.text("ok")
 })
 
+/*
+ * The feedback store is optional. Without DATABASE_URL the site is the
+ * read-only glossary it always was. With it, the schema is brought up to date
+ * before the server listens, and the change indexer runs once the server is
+ * up. Anything that goes wrong here -- an unparseable URL, an unreachable
+ * host, a lock that never frees, a build missing its migration files -- is
+ * logged and the site still serves. The glossary API is the critical path;
+ * feedback is not.
+ *
+ * DB_STARTUP_TIMEOUT (whole seconds, default 60, minimum 5) bounds how long
+ * a boot may wait on the database before giving up on it for this process.
+ * It is also the ceiling on how long a migration may run; see
+ * src/db/migrate.ts for why migrations are expected to be fast.
+ */
+function startupBudgetMs(): number {
+  const raw = process.env.DB_STARTUP_TIMEOUT
+  if (raw === undefined || raw === "") return 60_000
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds < 5) {
+    console.warn(`ignoring DB_STARTUP_TIMEOUT=${JSON.stringify(raw)}: expected whole seconds, at least 5; using 60`)
+    return 60_000
+  }
+  return Math.floor(seconds) * 1000
+}
+const budgetMs = startupBudgetMs()
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000}s`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
+
+let db: Sql | null = null
+if (process.env.DATABASE_URL) {
+  try {
+    db = openDatabase(process.env.DATABASE_URL)
+    // The database enforces the budget itself through lock and statement
+    // timeouts; the outer timer sits just past it as the backstop.
+    const applied = await withTimeout(migrate(db, { budgetMs }), budgetMs + 5_000, "schema migration")
+    console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const reason = err instanceof MigrationFilesError ? `build problem: ${message}` : `database unavailable: ${message}`
+    console.error(`${reason}; serving without feedback features`)
+    await closeDatabase(1)
+    db = null
+  }
+} else {
+  console.log("DATABASE_URL not set, serving without feedback features")
+}
+
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(
     `ethglossary listening on http://${info.address}:${info.port}` +
@@ -46,14 +111,27 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   )
 })
 
+if (db) {
+  const sql = db
+  describeBuild()
+    .then((build) => runIndexer(sql, build))
+    .then((r) => {
+      const detail = r.status === "indexed" ? ` (${r.first ? "first run, " : ""}${r.changes} changes)` : ""
+      console.log(`indexer: ${r.status}${detail}`)
+    })
+    .catch((err) => console.error("indexer failed:", err instanceof Error ? err.message : err))
+}
+
 /*
  * A rollout sends SIGTERM and waits. Stop accepting connections, let in-flight
- * requests finish, then exit; if something hangs, leave anyway before the
- * orchestrator's grace period runs out.
+ * requests finish, close the pool, then exit; if something hangs, leave anyway
+ * before the orchestrator's grace period runs out.
  */
 const shutdown = (signal: string) => {
   console.log(`${signal} received, shutting down`)
-  server.close(() => process.exit(0))
+  server.close(() => {
+    void closeDatabase(5).finally(() => process.exit(0))
+  })
   setTimeout(() => process.exit(1), 10_000).unref()
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"))

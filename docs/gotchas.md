@@ -133,6 +133,10 @@ Watch for breakage on Scalar version bumps. If the cast is no longer needed, rem
 
 Wrangler is gone from the repo; do not add it back. The app is a plain Node server (`src/server.ts`), locally through `pnpm dev` and in production as a container built from `main` by `.github/workflows/docker.yml` and rolled out by devops; see AGENTS.md "Deploy to production".
 
-## 14. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
+## 14. `DATABASE_URL` is optional, and a failing database must not take the site down
+
+`src/server.ts` opens the pool only when `DATABASE_URL` is set, and a migration or connection failure at startup is logged, not thrown. Feedback routes must check `getDb()` and answer 503 when it is null; the glossary and its API never depend on the store. Do not "fix" the startup path to crash on a database error.
+
+## 15. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
 
 The container is reached over plain http, so the request URL says `http://`. Build every absolute URL through `requestOrigin()` (see item 8). Consumers should call the URL, not the GitHub repo path; the repo is `github.com/ethereum/ethglossary`.

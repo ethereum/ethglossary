@@ -34,6 +34,7 @@ TypeScript shape from `src/lib/glossary-data.ts`:
 ```typescript
 {
   id: string,                      // kebab-case slug, e.g. "zk-proof". NOT the master key.
+  uid: string,                     // 10 chars [0-9a-z], minted once, never changes; feedback/history key
   term: string,                    // canonical form, e.g. "zero-knowledge proof"
   category: string,                // currently topical (see "Categories" below)
   definition: string,              // plain prose; never contains markup links

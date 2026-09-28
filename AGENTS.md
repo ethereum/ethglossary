@@ -24,6 +24,7 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
 - **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
 - **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
+- **pnpm**, pinned once in the `packageManager` field of `package.json`; CI and the Dockerfile (through corepack) both read it from there
 - **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
 Auto-generated OpenAPI from the same Zod schemas used for runtime validation is a real win. Do not migrate to Next.js or another framework without strong reason. See `docs/design-decisions.md` if tempted.
@@ -39,7 +40,10 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── pnpm-workspace.yaml              # empty -- isolates from any parent workspace
 ├── tsconfig.json                    # resolveJsonModule: true (we import .json)
 ├── Dockerfile                       # production image: node dist/server.js
+├── docker-compose.yml               # local Postgres for development (pnpm run db:up)
+├── migrations/                      # Postgres schema, append-only .sql; see "Database"
 ├── .github/workflows/docker.yml     # builds and publishes the image on push to main
+├── .github/workflows/ci.yml         # type check, uid check, bundle -- on every pull request
 ├── docs/
 │   ├── api-spec.md                  # internal planning spec
 │   ├── data-shape.md                # GlossaryTerm / TranslationEntry shapes; script_rule reconciliation
@@ -50,11 +54,15 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── scripts/
 │   ├── audit-glossary.mjs           # audit data vs v1 policy; outputs Markdown
 │   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js
+│   ├── term-uid.mjs                 # mint / backfill / check the stable term uid
 │   ├── dev.mjs                      # esbuild watch + node --watch, loads .env.local
 │   └── verify-deploy.sh             # smoke test for a running deploy
 └── src/
     ├── index.ts                     # the app: CORS, cache headers, OpenAPI doc, Scalar, viewer mount
-    ├── server.ts                    # Node entry: static files, /healthz, listen, SIGTERM
+    ├── server.ts                    # Node entry: static files, /healthz, db + migrations, listen, SIGTERM
+    ├── db/
+    │   ├── client.ts                # the postgres pool; getDb() is null without DATABASE_URL
+    │   └── migrate.ts               # applies migrations/*.sql at startup under an advisory lock
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -64,6 +72,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     ├── lib/
     │   ├── glossary-data.ts         # JSON loading; surface-form index; resolveTerm
     │   ├── content-filter.ts        # filterForContent
+    │   ├── hash.ts                  # slotHash / termHash -- what feedback is anchored to
+    │   ├── indexer.ts               # startup: records what a deploy changed (term_changes)
     │   ├── context-types.ts         # the six votable translation slots; applicableContexts()
     │   ├── language-meta.ts         # endonyms, regions, script direction (viewer only)
     │   └── sanitize.ts              # HTML allowlist for definitions
@@ -331,11 +341,58 @@ Rules that are not obvious from the table:
   read-only by construction and says so on the page. Do not add vote controls
   to it.
 
+## Database
+
+Community feedback lives in a PostgreSQL database. In production devops run
+it and hand the app a `DATABASE_URL`; locally `pnpm run db:up` starts one in
+Docker that the `DATABASE_URL` in `.env.example` points at. The glossary
+itself stays in the bundled JSON; the database never changes what the site or
+API serves.
+
+- **`DATABASE_URL` is optional.** Without it, or if the database cannot be
+  reached at startup, the app logs that and serves the read-only glossary
+  exactly as before. The glossary API is the critical path; feedback is not.
+- **Schema** is `migrations/NNNN_label.sql`, append-only. Never edit a file
+  that has shipped; add the next number. `src/db/migrate.ts` applies pending
+  files at startup, before the server listens, under an advisory lock so
+  replicas do not race. Waits are bounded by `DB_STARTUP_TIMEOUT` (whole
+  seconds, default 60); past that the boot gives up on the database and
+  serves without it. **That budget is also the ceiling on a migration's run
+  time.** Migration files change the schema and finish in seconds; anything
+  that touches many rows is a script or a startup task, never a migration.
+  Nothing to run by hand, in any environment.
+- **Every master entry has a `uid`** (`scripts/term-uid.mjs`). Feedback and
+  history key on it, never on the canonical name or the `id` slug, because
+  both of those change on rename. `pnpm run check:uids` verifies the data.
+- **Feedback is anchored to content hashes.** `slotHash` / `termHash` in
+  `src/lib/hash.ts` hash the exact value a reviewer saw; whether feedback is
+  about the live value is decided by re-hashing the bundled data at request
+  time, never by reading a table.
+- **`src/lib/indexer.ts` runs once at startup**, after the server is
+  listening. It hashes the bundled glossary, compares it with the recorded
+  state, and writes a snapshot plus one `term_changes` row per difference.
+  It never trusts a build identifier, so redeploying an older image records
+  the rollback instead of skipping it, and a boot that finds nothing
+  different writes nothing. It is the only writer of `glossary_snapshots`,
+  `entry_state`, `term_state` and `term_changes`. The first run records
+  state and emits no change rows. Known limitation: an old-image pod that
+  restarts during a partial rollout is indistinguishable from a rollback and
+  records one; the Versions rail should collapse inverse snapshots minutes
+  apart.
+- **A missing or duplicated `uid` fails the image build and the CI check**,
+  because the data module refuses to load without one. Run `pnpm run check`
+  and `pnpm run check:uids` before opening a PR. CI also rebuilds the
+  stylesheet and font subsets and fails if the committed copies are stale.
+- **Look at the data** locally with `pnpm run db:psql`, or `pnpm run db:ui`
+  for pgweb at `http://127.0.0.1:8081` (read-only; tunnel the port over SSH
+  like the dev server). Production access is through devops.
+- **Portability:** plain SQL, application-minted UUIDs, no extensions.
+
 ## Adding a glossary term
 
 Read `docs/data-shape.md` and `docs/term-template.json` first. Then:
 
-1. Decide the canonical term name (becomes the JSON key in `confirmed_terms`) and a stable kebab-case `id`.
+1. Decide the canonical term name (becomes the JSON key in `confirmed_terms`) and a stable kebab-case `id`. Mint a `uid` with `node scripts/term-uid.mjs`; it is never edited afterwards.
 2. Pick `casing` (`standard` / `proper` / `uppercase` / `fixed`) -- see `docs/data-shape.md` for the semantics.
 3. Pick `script_rule`. If the term is a brand, project, person, programming language, OS, ticker, etc., consult `docs/translation-policy.md` §4 to choose the right value based on term role.
 4. Add to `src/data/glossary-terms-enhanced.json` under `confirmed_terms` using the template.
