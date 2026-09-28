@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi"
 import { apiReference } from "@scalar/hono-api-reference"
+import { contextStorage } from "hono/context-storage"
 import { cors } from "hono/cors"
 
 import llmsTxt from "./llms.txt"
@@ -10,10 +11,21 @@ import styleGuide from "./routes/style-guide"
 import translations from "./routes/translations"
 import filter from "./routes/filter"
 import schema from "./routes/schema"
+import auth from "./routes/auth"
 import { requestOrigin } from "./lib/request-origin"
 import { cacheControl } from "./lib/cache-control"
+import { sessionMiddleware } from "./auth/session"
+import type { AppEnv } from "./auth/session"
 
-const app = new OpenAPIHono()
+const app = new OpenAPIHono<AppEnv>()
+
+/*
+ * Make the request context reachable from anywhere in the render tree, so
+ * the page shell can ask who is signed in without every page threading a
+ * prop through. Then resolve the session cookie once per request.
+ */
+app.use("*", contextStorage())
+app.use("*", sessionMiddleware())
 
 /*
  * `/translations/` should not 404 when `/translations` works.
@@ -39,8 +51,12 @@ app.use("*", async (c, next) => {
   }
 })
 
-// CORS -- public API, allow all origins for reads
-app.use("*", cors())
+// CORS -- the public API and its descriptions are readable from anywhere.
+// Nothing under /auth or /account gets CORS headers: those are same-origin
+// only, and the browser's default is exactly that.
+app.use("/api/*", cors())
+app.use("/openapi.json", cors())
+app.use("/llms.txt", cors())
 
 // Cache headers for read endpoints -- see docs/design-decisions.md, "Caching"
 app.use("/api/v1/info/*", cacheControl("public, max-age=3600"))
@@ -110,7 +126,8 @@ const scalar = apiReference({
 
 app.get("/docs", async (c) => {
   // The Scalar handler always returns a Response; `next` is never called.
-  const res = (await scalar(c, async () => {})) as Response
+  // Scalar types its handler against the untyped Env; our context is a superset.
+  const res = (await scalar(c as never, async () => {})) as Response
   const html = await res.text()
   return c.html(
     html
@@ -123,6 +140,10 @@ app.get("/docs", async (c) => {
 app.get("/llms.txt", (c) => {
   return c.text(llmsTxt)
 })
+
+// Sign-in, sign-out, account. Before the viewer so /signin and /account are
+// never mistaken for a term.
+app.route("/", auth)
 
 // Viewer (root)
 app.route("/", viewer)

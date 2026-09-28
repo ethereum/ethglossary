@@ -34,10 +34,11 @@ import { languageFromCookie } from "../lib/negotiate-language"
 import { LANG_COOKIE, LANG_COOKIE_MAX_AGE } from "../lib/constants"
 import type { PageUrl } from "../ui/layout"
 import { requestOrigin } from "../lib/request-origin"
+import type { AppEnv } from "../auth/session"
 import type { OriginRequest } from "../lib/request-origin"
 import ethglossaryMark from "../ui/icons/ethglossary.svg"
 
-const app = new OpenAPIHono()
+const app = new OpenAPIHono<AppEnv>()
 
 /**
  * Remember the language a reviewer is actually looking at, so /translate and

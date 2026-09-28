@@ -61,4 +61,4 @@ export const ACCOUNTS_ENABLED = false
  * A hover string rather than text inside the button: the control should still
  * look like itself, so the page reads as the finished thing it will be.
  */
-export const COMING_SOON_TITLE = "Coming soon -- this needs an account, which ships in a later phase"
+export const COMING_SOON_TITLE = "Coming soon -- voting and suggestions ship in the next release"

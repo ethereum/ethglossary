@@ -63,6 +63,7 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     ├── db/
     │   ├── client.ts                # the postgres pool; getDb() is null without DATABASE_URL
     │   └── migrate.ts               # applies migrations/*.sql at startup under an advisory lock
+    ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -84,9 +85,10 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── icon.tsx                 # <Icon name> -- Lucide imports + custom art
     │   ├── icons/                   # custom .svg only (brand marks); Lucide comes from npm
     │   ├── islands.ts               # client scripts (search, language picker)
-    │   └── pages/                   # home, translate, contexts, languages, style-guide
+    │   ├── siwe.ts                  # Sign-In with Ethereum island (EIP-6963 + personal_sign)
+    │   └── pages/                   # home, translate, contexts, languages, style-guide, signin, account
     ├── schemas/                     # Zod schemas (common, style-guide, translations, filter)
-    └── routes/                      # info, style-guide, translations, filter, schema, viewer
+    └── routes/                      # info, style-guide, translations, filter, schema, viewer, auth
 ```
 
 All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scalar), `/openapi.json`, `/llms.txt`.
@@ -325,6 +327,8 @@ Rules that are easy to get wrong:
 | `/translations/:lang/:termId` | One term in one language, with the vote controls |
 | `/translations/change` | Clears the stored language and returns to the picker |
 | `/contexts` | What prose / heading / tag / ui / code / plurals mean |
+| `/signin`, `/account` | Sign in (GitHub, Discord, Ethereum wallet) and the account page. `noIndex` |
+| `/auth/*` | OAuth start and callback per provider, SIWE nonce and verify, sign-out |
 | `/robots.txt`, `/sitemap.xml` | Crawler surface. Everything is allowed |
 
 Rules that are not obvious from the table:
@@ -387,6 +391,56 @@ API serves.
   for pgweb at `http://127.0.0.1:8081` (read-only; tunnel the port over SSH
   like the dev server). Production access is through devops.
 - **Portability:** plain SQL, application-minted UUIDs, no extensions.
+
+## Accounts and sign-in
+
+Signing in exists so a person can give feedback; it is not a profile. The
+only thing stored about a person is the provider's stable id (`users.provider`
++ `users.subject`), plus an optional display name only they and the
+maintainers see, and a verified ENS name for wallets that have one. No
+passwords, no emails, no avatars. Everything lives under `src/auth/`, the
+routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
+`account.tsx`.
+
+- **Methods:** GitHub and Discord (OAuth 2.0 authorization code, hand-rolled,
+  see `src/auth/oauth.ts`) and Sign-In with Ethereum (`src/auth/siwe.ts`,
+  EIP-4361 via viem). A provider is offered only when its `*_CLIENT_ID` and
+  `*_CLIENT_SECRET` are set; SIWE needs nothing. `ETH_RPC_URL` is optional
+  and adds ENS names and smart-contract-wallet signatures. One method per
+  account; there is no linking.
+- **Scopes are the minimum:** none for GitHub (public profile only),
+  `identify` for Discord. Provider tokens are used for one profile request
+  and never stored.
+- **Sessions** (`src/auth/session.ts`): an opaque 256-bit token in the
+  `ethglossary-session` cookie (`HttpOnly; SameSite=Lax; Secure` when the
+  request is https), stored as a SHA-256 hash. Thirty-day sliding expiry,
+  ninety-day cap. The middleware puts the user on `c.var.user`; page code
+  reads it through `currentUser()` in `src/ui/layout.tsx` via Hono's
+  context storage, so no page threads a prop. Any response for a signed-in
+  person is `Cache-Control: private, no-store`.
+- **Challenges** (`src/auth/challenges.ts`): OAuth `state` and SIWE nonces
+  are single-use, ten minutes, stored hashed. `state` is also bound to a
+  cookie on the browser that started the flow. `next` is accepted only as a
+  same-origin path (`safeNextPath`), so sign-in can never redirect off-site.
+- **CSRF:** Hono's `csrf()` on every auth and account route, with the
+  allowed origin computed from the request. The two JSON endpoints require
+  `Content-Type: application/json` and check `Origin` themselves.
+- **No database, no accounts:** `/signin` answers 503, the nav shows the
+  inert "coming soon" button, and everything else is unchanged. Sign-in
+  must never be a reason the glossary is down.
+- **Deleting an account** tombstones the row (subject, display name and ENS
+  nulled, `deleted_at` set) so feedback keeps an anonymous author; the person
+  can sign up again fresh. A ban (`banned_at`, set by hand) keeps the subject
+  so that identity is refused at sign-in.
+- **Local development:** register your own GitHub OAuth App and Discord
+  application with `http://localhost:8787/auth/<provider>/callback` as the
+  callback and put the ids and secrets in `.env.local`; browse the dev server
+  at `localhost`, not `127.0.0.1`, because the callback URL is derived from
+  the address in the browser. For headless tests, `GITHUB_OAUTH_ORIGIN`,
+  `GITHUB_API_ORIGIN` and `DISCORD_ORIGIN` point the flows at a mock
+  provider. They are never set in production.
+- **Votes and suggestions are still gated** by `ACCOUNTS_ENABLED` in
+  `src/lib/constants.ts`. That flips in the feedback PR, not here.
 
 ## Adding a glossary term
 

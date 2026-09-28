@@ -16,6 +16,7 @@ import { closeDatabase, openDatabase } from "./db/client"
 import type { Sql } from "./db/client"
 import { migrate, MigrationFilesError } from "./db/migrate"
 import { describeBuild, runIndexer } from "./lib/indexer"
+import { authConfig } from "./auth/config"
 
 const port = Number(process.env.PORT ?? 8787)
 // Loopback by default so a laptop is not listening on every interface; the
@@ -102,6 +103,12 @@ if (process.env.DATABASE_URL) {
   }
 } else {
   console.log("DATABASE_URL not set, serving without feedback features")
+}
+
+if (db) {
+  const { providers, siwe } = authConfig()
+  const methods = [...providers.map((p) => p.id), `siwe${siwe.rpcUrl ? "" : " (no rpc: EOA wallets only, no ENS)"}`]
+  console.log(`sign-in: ${methods.join(", ")}`)
 }
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
