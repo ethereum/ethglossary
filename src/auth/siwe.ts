@@ -53,8 +53,9 @@ export interface SiweIdentity {
 
 /**
  * Check a signed EIP-4361 message end to end. `host` is the request's own
- * host, which the message's `domain` must equal; this is what stops a message
- * signed for another site being replayed here.
+ * host, which the message's `domain` must equal, and the message's scheme
+ * must equal the request's; together they stop a message signed for another
+ * site, or for the http twin of this one, being replayed here.
  */
 export async function verifySiwe(
   sql: Sql,
@@ -75,9 +76,17 @@ export async function verifySiwe(
   if (fields.chainId !== mainnet.id) throw new SiweError("message must be for Ethereum mainnet (chain id 1)")
   if (!fields.expirationTime) throw new SiweError("message must carry an expiration time")
   if (!fields.uri || new URL(fields.uri).origin !== origin) throw new SiweError("message URI is not this site")
+  const scheme = new URL(origin).protocol.replace(/:$/, "")
+  if (!fields.scheme) throw new SiweError("message must state its scheme")
 
-  // Domain, nonce, and the time window in one pass.
-  const valid = validateSiweMessage({ message: fields, domain: host, nonce: fields.nonce, time: new Date() })
+  // Scheme, domain, nonce, and the time window in one pass.
+  const valid = validateSiweMessage({
+    message: fields,
+    scheme,
+    domain: host,
+    nonce: fields.nonce,
+    time: new Date(),
+  })
   if (!valid) throw new SiweError("message is not for this site, or has expired")
 
   const challenge = await consumeChallenge(sql, "siwe_nonce", fields.nonce)

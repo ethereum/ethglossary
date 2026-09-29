@@ -71,8 +71,10 @@ export const SIWE_ISLAND = `
       var nonce = (await post("/auth/siwe/nonce", { next: next })).nonce;
       var now = new Date();
       var expires = new Date(now.getTime() + 10 * 60 * 1000);
+      // EIP-4361 makes the scheme optional and wallets assume https when it
+      // is missing, which fails on a plain-http dev server. Always state it.
       var message =
-        location.host + " wants you to sign in with your Ethereum account:\\n" +
+        location.protocol + "//" + location.host + " wants you to sign in with your Ethereum account:\\n" +
         address + "\\n\\n" +
         "Sign in to ETHGlossary. This request will not trigger a blockchain transaction or cost any gas.\\n\\n" +
         "URI: " + location.origin + "\\n" +

@@ -180,7 +180,7 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
     return (
       <span class={`flex items-center gap-3 ${block ? "w-full justify-between" : ""}`}>
         <a
-          class="max-w-[12rem] truncate text-label-md font-bold text-foreground-strong no-underline hover:underline"
+          class="max-w-[12rem] truncate text-label-md leading-6 font-bold text-foreground-strong no-underline hover:underline"
           href="/account"
           title="Your account"
         >
