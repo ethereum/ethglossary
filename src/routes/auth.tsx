@@ -12,6 +12,7 @@
  */
 
 import { Hono } from "hono"
+import { HTTPException } from "hono/http-exception"
 import { csrf } from "hono/csrf"
 import { bodyLimit } from "hono/body-limit"
 import type { Context } from "hono"
@@ -42,6 +43,25 @@ const app = new Hono<AppEnv>()
 app.use("*", csrf({ origin: (origin, c) => origin === requestOrigin(c.req) }))
 app.use("*", bodyLimit({ maxSize: 16 * 1024 }))
 
+/*
+ * A database that was reachable at boot and is not any more (a restart, a
+ * failover, a local container stopped underneath a dev server) surfaces here
+ * as a thrown query. Answer 503 in the shape the caller expects -- JSON for
+ * the SIWE endpoints, the sign-in page for everything else -- rather than a
+ * bare 500, and log the cause once.
+ */
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse()
+  console.error(`auth: ${c.req.method} ${c.req.path} failed:`, err instanceof Error ? err.message : err)
+  c.header("Cache-Control", "no-store")
+  if (c.req.path.startsWith("/auth/siwe/")) {
+    return c.json({ error: "accounts are temporarily unavailable; try again shortly" }, 503)
+  }
+  return signInPage(c, { error: UNAVAILABLE, status: 503 })
+})
+
+const UNAVAILABLE = "Accounts are temporarily unavailable. The glossary itself is unaffected."
+
 const pageUrl = (c: Context): PageUrl => ({ origin: requestOrigin(c.req), path: new URL(c.req.url).pathname })
 const activeLang = (c: Context) => languageFromCookie(c.req.header("Cookie"))
 const nextFromQuery = (c: Context) => safeNextPath(c.req.query("next"))
@@ -62,10 +82,7 @@ const signInPage = (c: Context, opts: { error?: string; next?: string | null; st
 async function requireDb(c: Context): Promise<Sql | Response> {
   const sql = getDb()
   if (sql) return sql
-  return signInPage(c, {
-    error: "Accounts are temporarily unavailable. The glossary itself is unaffected.",
-    status: 503,
-  })
+  return signInPage(c, { error: UNAVAILABLE, status: 503 })
 }
 
 /** JSON endpoints: same-origin, JSON body, database present. */
