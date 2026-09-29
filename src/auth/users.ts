@@ -4,7 +4,7 @@
  * One row per person, one sign-in method per person, and the only thing the
  * system needs to know about them is the provider's stable id. Everything
  * else here is either vanity (display_name) or verified convenience
- * (ens_name).
+ * (ens_name, handle).
  */
 
 import { randomUUID } from "node:crypto"
@@ -48,41 +48,48 @@ export function cleanDisplayName(value: string | null | undefined): string | nul
 }
 
 /**
- * The account for a (provider, subject), created on first sight. A banned
- * account is refused. A deleted account has no subject any more, so the same
- * person coming back gets a fresh row, which is the intended meaning of
- * "delete my account".
+ * What a sign-in learned. `undefined` means "could not tell this time" and
+ * leaves the stored value alone; `null` means "definitely none" and clears
+ * it. A flaky RPC must not erase a verified ENS name, and a profile response
+ * without a login must not erase a handle.
+ */
+export interface SignInIdentity {
+  handle?: string | null
+  ensName?: string | null
+  /** Used only when the account is created. */
+  displayName: string | null
+}
+
+/**
+ * The account for a (provider, subject), created on first sight, in one
+ * statement so two sign-ins racing for the same identity cannot both insert.
+ * A banned account is refused. A deleted account has no subject any more, so
+ * the same person coming back gets a fresh row, which is the intended
+ * meaning of "delete my account".
  */
 export async function findOrCreateUser(
   sql: Sql,
   provider: string,
   subject: string,
-  identity: { handle: string | null; displayName: string | null; ensName: string | null }
+  identity: SignInIdentity
 ): Promise<UserRow> {
-  const handle = cleanDisplayName(identity.handle)
-  const existing = await sql<UserRow[]>`
-    SELECT * FROM users WHERE provider = ${provider} AND subject = ${subject}`
-  const found = existing[0]
-  if (found) {
-    if (found.banned_at) throw new AccountBannedError()
-    // The handle and the ENS name are what the provider says today, not what
-    // it said at sign-up: logins get renamed, ENS records change hands.
-    const updated = await sql<UserRow[]>`
-      UPDATE users SET handle = ${handle}, ens_name = ${identity.ensName}, last_seen_at = now()
-      WHERE id = ${found.id} RETURNING *`
-    return updated[0]
-  }
+  const handleKnown = identity.handle !== undefined
+  const ensKnown = identity.ensName !== undefined
+  const handle = cleanDisplayName(identity.handle ?? null)
+  const ens = identity.ensName ?? null
 
-  const created = await sql<UserRow[]>`
+  const rows = await sql<UserRow[]>`
     INSERT INTO users (id, provider, subject, handle, display_name, ens_name)
-    VALUES (${randomUUID()}, ${provider}, ${subject}, ${handle}, ${cleanDisplayName(identity.displayName)}, ${identity.ensName})
+    VALUES (${randomUUID()}, ${provider}, ${subject}, ${handle}, ${cleanDisplayName(identity.displayName)}, ${ens})
+    ON CONFLICT (provider, subject) DO UPDATE SET
+      handle       = CASE WHEN ${handleKnown} THEN ${handle} ELSE users.handle END,
+      ens_name     = CASE WHEN ${ensKnown} THEN ${ens} ELSE users.ens_name END,
+      last_seen_at = now()
+    WHERE users.banned_at IS NULL
     RETURNING *`
-  return created[0]
-}
-
-export async function getUser(sql: Sql, id: string): Promise<UserRow | null> {
-  const rows = await sql<UserRow[]>`SELECT * FROM users WHERE id = ${id} AND deleted_at IS NULL`
-  return rows[0] ?? null
+  // The conflict target matched but the WHERE did not: the row is banned.
+  if (!rows[0]) throw new AccountBannedError()
+  return rows[0]
 }
 
 export async function updateDisplayName(sql: Sql, id: string, value: string | null): Promise<void> {

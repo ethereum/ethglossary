@@ -12,7 +12,7 @@
 import { serve } from "@hono/node-server"
 import { serveStatic } from "@hono/node-server/serve-static"
 import app from "./index"
-import { closeDatabase, openDatabase } from "./db/client"
+import { closeDatabase, openDatabase, publishDatabase } from "./db/client"
 import type { Sql } from "./db/client"
 import { migrate, MigrationFilesError } from "./db/migrate"
 import { describeBuild, runIndexer } from "./lib/indexer"
@@ -92,15 +92,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
  * decides whether to try again later.
  */
 async function connectDatabase(url: string, quiet: boolean): Promise<Sql | null> {
+  // Not published yet: getDb() stays null, and the site advertises no
+  // accounts, until the schema is confirmed current.
+  const sql = openDatabase(url)
   try {
-    const sql = openDatabase(url)
     // The database enforces the budget itself through lock and statement
     // timeouts; the outer timer sits just past it as the backstop.
     const applied = await withTimeout(migrate(sql, { budgetMs }), budgetMs + 5_000, "schema migration")
     console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
+    publishDatabase(sql)
     return sql
   } catch (err) {
-    await closeDatabase(1)
+    await closeDatabase(sql, 1)
     if (err instanceof MigrationFilesError) throw err
     if (!quiet) console.error(`database unavailable: ${err instanceof Error ? err.message : String(err)}`)
     return null
@@ -182,7 +185,7 @@ if (db) startIndexer(db)
 const shutdown = (signal: string) => {
   console.log(`${signal} received, shutting down`)
   server.close(() => {
-    void closeDatabase(5).finally(() => process.exit(0))
+    void closeDatabase(undefined, 5).finally(() => process.exit(0))
   })
   setTimeout(() => process.exit(1), 10_000).unref()
 }

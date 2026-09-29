@@ -6,6 +6,10 @@
  * server checks that the message is about this host, consumes the nonce, and
  * verifies the signature.
  *
+ * The timestamps in the message are issued by the server along with the
+ * nonce and echoed by the browser, so a device with a slow clock cannot sign
+ * a message that is already expired by the time it arrives.
+ *
  * With ETH_RPC_URL set, verification goes through a public client, which also
  * accepts smart-contract wallets (ERC-1271 / ERC-6492), and the address's ENS
  * name is looked up and forward-checked. Without it, only externally owned
@@ -19,7 +23,7 @@ import { getEnsName, verifyMessage as verifyOnchainMessage } from "viem/actions"
 import { mainnet } from "viem/chains"
 import { parseSiweMessage, validateSiweMessage } from "viem/siwe"
 import type { Sql } from "../db/client"
-import { consumeChallenge, createChallenge } from "./challenges"
+import { CHALLENGE_LIFETIME_MS, consumeChallenge, createChallenge } from "./challenges"
 
 export class SiweError extends Error {
   constructor(
@@ -31,23 +35,39 @@ export class SiweError extends Error {
   }
 }
 
-let client: PublicClient | null | undefined
+const clients = new Map<string, PublicClient>()
 
 function publicClient(rpcUrl: string | null): PublicClient | null {
-  if (client !== undefined) return client
-  client = rpcUrl
-    ? (createPublicClient({ chain: mainnet, transport: http(rpcUrl, { timeout: 8_000 }) }) as PublicClient)
-    : null
+  if (!rpcUrl) return null
+  let client = clients.get(rpcUrl)
+  if (!client) {
+    client = createPublicClient({ chain: mainnet, transport: http(rpcUrl, { timeout: 8_000 }) }) as PublicClient
+    clients.set(rpcUrl, client)
+  }
   return client
 }
 
-export async function issueNonce(sql: Sql, nextPath: string | null): Promise<string> {
-  return createChallenge(sql, "siwe_nonce", "siwe", nextPath)
+export interface SiweChallenge {
+  nonce: string
+  issuedAt: string
+  expirationTime: string
+}
+
+/** A nonce plus the timestamps the browser must put in the message. */
+export async function issueNonce(sql: Sql, nextPath: string | null): Promise<SiweChallenge> {
+  const now = Date.now()
+  const nonce = await createChallenge(sql, "siwe_nonce", "siwe", nextPath)
+  return {
+    nonce,
+    issuedAt: new Date(now).toISOString(),
+    expirationTime: new Date(now + CHALLENGE_LIFETIME_MS).toISOString(),
+  }
 }
 
 export interface SiweIdentity {
   address: Address
-  ensName: string | null
+  /** A verified name, null when the address has none, undefined when it could not be checked. */
+  ensName: string | null | undefined
   nextPath: string | null
 }
 
@@ -62,10 +82,12 @@ export async function verifySiwe(
   host: string,
   origin: string,
   rpcUrl: string | null,
-  message: string,
-  signature: string
+  message: unknown,
+  signature: unknown
 ): Promise<SiweIdentity> {
-  if (typeof message !== "string" || message.length > 4_000) throw new SiweError("message is missing or too long")
+  if (typeof message !== "string" || !message || message.length > 4_000) {
+    throw new SiweError("message must be a string of at most 4000 characters")
+  }
   if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature) || signature.length > 20_000) {
     throw new SiweError("signature is malformed")
   }
@@ -75,14 +97,20 @@ export async function verifySiwe(
   if (!fields.nonce) throw new SiweError("message has no nonce")
   if (fields.chainId !== mainnet.id) throw new SiweError("message must be for Ethereum mainnet (chain id 1)")
   if (!fields.expirationTime) throw new SiweError("message must carry an expiration time")
-  if (!fields.uri || new URL(fields.uri).origin !== origin) throw new SiweError("message URI is not this site")
-  const scheme = new URL(origin).protocol.replace(/:$/, "")
   if (!fields.scheme) throw new SiweError("message must state its scheme")
+
+  let uriOrigin: string
+  try {
+    uriOrigin = new URL(fields.uri ?? "").origin
+  } catch {
+    throw new SiweError("message URI is not a valid URL")
+  }
+  if (uriOrigin !== origin) throw new SiweError("message URI is not this site")
 
   // Scheme, domain, nonce, and the time window in one pass.
   const valid = validateSiweMessage({
     message: fields,
-    scheme,
+    scheme: new URL(origin).protocol.replace(/:$/, ""),
     domain: host,
     nonce: fields.nonce,
     time: new Date(),
@@ -99,11 +127,17 @@ export async function verifySiwe(
     : await verifyEoaMessage({ address, message, signature: signature as Hex })
   if (!ok) throw new SiweError("signature does not match the address", 401)
 
-  let ensName: string | null = null
+  // Three outcomes, kept distinct: a name, definitely no name, or could not
+  // tell (no RPC, or the RPC failed). Only the first two touch the stored
+  // value. viem forward-checks the reverse record, so a name that comes back
+  // really does point at this address.
+  let ensName: string | null | undefined = undefined
   if (rpc) {
-    // Best effort. viem forward-checks the reverse record, so a name that
-    // comes back here really does point at this address.
-    ensName = await getEnsName(rpc, { address }).catch(() => null)
+    try {
+      ensName = await getEnsName(rpc, { address })
+    } catch (err) {
+      console.error("ens lookup failed:", err instanceof Error ? err.message : err)
+    }
   }
 
   return { address, ensName, nextPath: challenge.nextPath }

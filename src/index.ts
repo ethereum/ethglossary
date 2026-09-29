@@ -141,12 +141,14 @@ app.get("/llms.txt", (c) => {
   return c.text(llmsTxt)
 })
 
-// Sign-in, sign-out, account. Before the viewer so /signin and /account are
-// never mistaken for a term.
-app.route("/", auth)
-
 // Viewer (root)
 app.route("/", viewer)
+
+// Sign-in, sign-out, account. Mounted last: a sub-app's middleware and error
+// handler also apply to routes registered after its mount point, so nothing
+// may follow it. Its own middleware is on explicit prefixes for the same
+// reason. The viewer has no catch-all, so /signin and /account reach it.
+app.route("/", auth)
 
 // Hono only consults the top-level handler, so the viewer's 404 page has to
 // be registered here rather than on the sub-app. It keeps JSON for /api/*.

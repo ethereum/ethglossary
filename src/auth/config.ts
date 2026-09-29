@@ -7,8 +7,9 @@
  * and smart-contract-wallet verification.
  *
  * The *_ORIGIN overrides exist for local end-to-end tests against a mock
- * provider. They are not in .env.example and have no reason to be set in
- * production.
+ * provider. They are ignored, with a warning, when NODE_ENV is production:
+ * a stray variable there could send the token exchange, client secret
+ * included, to a host of someone's choosing.
  */
 
 export type OAuthProviderId = "github" | "discord"
@@ -23,8 +24,12 @@ export interface OAuthProvider {
   userUrl: string
   /** Requested at authorization time. Empty means the provider's minimum. */
   scope: string
-  /** Pull the stable id and the human handle out of the profile response. */
-  profile(json: Record<string, unknown>): { subject: string; handle: string | null } | null
+  /**
+   * Pull the stable id and the human handle out of the profile response.
+   * `handle: undefined` means the response did not say, which leaves any
+   * stored handle alone.
+   */
+  profile(json: Record<string, unknown>): { subject: string; handle: string | undefined } | null
 }
 
 export interface AuthConfig {
@@ -38,12 +43,23 @@ function strip(value: string | undefined): string | null {
 }
 
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
+  const production = env.NODE_ENV === "production"
+  const override = (name: string, fallback: string): string => {
+    const value = strip(env[name])
+    if (!value) return fallback
+    if (production) {
+      console.warn(`ignoring ${name} in production; provider endpoints are not configurable there`)
+      return fallback
+    }
+    return value
+  }
+
   const providers: OAuthProvider[] = []
 
   const gh = { id: env.GITHUB_CLIENT_ID?.trim(), secret: env.GITHUB_CLIENT_SECRET?.trim() }
   if (gh.id && gh.secret) {
-    const oauthOrigin = strip(env.GITHUB_OAUTH_ORIGIN) ?? "https://github.com"
-    const apiOrigin = strip(env.GITHUB_API_ORIGIN) ?? "https://api.github.com"
+    const oauthOrigin = override("GITHUB_OAUTH_ORIGIN", "https://github.com")
+    const apiOrigin = override("GITHUB_API_ORIGIN", "https://api.github.com")
     providers.push({
       id: "github",
       label: "GitHub",
@@ -57,14 +73,14 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
       scope: "",
       profile: (j) =>
         typeof j.id === "number" || typeof j.id === "string"
-          ? { subject: String(j.id), handle: typeof j.login === "string" ? j.login : null }
+          ? { subject: String(j.id), handle: typeof j.login === "string" ? j.login : undefined }
           : null,
     })
   }
 
   const dc = { id: env.DISCORD_CLIENT_ID?.trim(), secret: env.DISCORD_CLIENT_SECRET?.trim() }
   if (dc.id && dc.secret) {
-    const origin = strip(env.DISCORD_ORIGIN) ?? "https://discord.com"
+    const origin = override("DISCORD_ORIGIN", "https://discord.com")
     providers.push({
       id: "discord",
       label: "Discord",
@@ -78,7 +94,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
       scope: "identify",
       profile: (j) =>
         typeof j.id === "string"
-          ? { subject: j.id, handle: typeof j.username === "string" ? j.username : null }
+          ? { subject: j.id, handle: typeof j.username === "string" ? j.username : undefined }
           : null,
     })
   }
@@ -91,11 +107,6 @@ let config: AuthConfig | null = null
 export function authConfig(): AuthConfig {
   if (!config) config = loadAuthConfig()
   return config
-}
-
-/** For tests that change the environment between runs. */
-export function resetAuthConfig(): void {
-  config = null
 }
 
 export function oauthProvider(id: string): OAuthProvider | undefined {

@@ -68,9 +68,9 @@ export const SIWE_ISLAND = `
       if (!address) throw new Error("no account was shared");
 
       var next = btn.getAttribute("data-next") || "";
-      var nonce = (await post("/auth/siwe/nonce", { next: next })).nonce;
-      var now = new Date();
-      var expires = new Date(now.getTime() + 10 * 60 * 1000);
+      // The server issues the nonce and the timestamps together, so a slow
+      // device clock cannot produce a message that is already expired.
+      var challenge = await post("/auth/siwe/nonce", { next: next });
       // EIP-4361 makes the scheme optional and wallets assume https when it
       // is missing, which fails on a plain-http dev server. Always state it.
       var message =
@@ -80,9 +80,9 @@ export const SIWE_ISLAND = `
         "URI: " + location.origin + "\\n" +
         "Version: 1\\n" +
         "Chain ID: 1\\n" +
-        "Nonce: " + nonce + "\\n" +
-        "Issued At: " + now.toISOString() + "\\n" +
-        "Expiration Time: " + expires.toISOString();
+        "Nonce: " + challenge.nonce + "\\n" +
+        "Issued At: " + challenge.issuedAt + "\\n" +
+        "Expiration Time: " + challenge.expirationTime;
 
       say("Check your wallet to sign the message.");
       var signature = await eth.request({ method: "personal_sign", params: [toHex(message), address] });

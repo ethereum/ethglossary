@@ -8,9 +8,12 @@
  * person signs in again.
  *
  * The middleware attaches the signed-in user (or null) to the request as
- * `c.var.user`, and marks any response rendered for a signed-in person
- * `private, no-store` so nothing between the container and the browser can
- * cache one person's page for another.
+ * `c.var.user`, along with whether accounts are available at all, and marks
+ * any response rendered for a signed-in person `private, no-store` so nothing
+ * between the container and the browser can cache one person's page for
+ * another. It runs only for pages: static assets and the read API never
+ * depend on who is asking, and looking up a session for every font file
+ * would be a database round trip per subresource.
  */
 
 import { createHash, randomBytes } from "node:crypto"
@@ -34,7 +37,10 @@ export interface SessionUser {
   createdAt: Date
 }
 
-export type AppEnv = { Bindings: Record<string, never>; Variables: { user: SessionUser | null } }
+export type AppEnv = {
+  Bindings: Record<string, never>
+  Variables: { user: SessionUser | null; accountsAvailable: boolean }
+}
 
 export const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex")
 
@@ -44,6 +50,8 @@ const isHttps = (c: Context) => requestOrigin(c.req).startsWith("https://")
 export async function createSession(sql: Sql, c: Context, userId: string): Promise<void> {
   const token = randomBytes(32).toString("base64url")
   const expires = new Date(Date.now() + SLIDING_DAYS * 86_400_000)
+  // A sign-in is a good moment to drop sessions nobody can use any more.
+  await sql`DELETE FROM sessions WHERE expires_at < now()`
   await sql`
     INSERT INTO sessions (token_hash, user_id, expires_at)
     VALUES (${sha256(token)}, ${userId}, ${expires})`
@@ -56,15 +64,24 @@ export async function createSession(sql: Sql, c: Context, userId: string): Promi
   })
 }
 
-export async function destroySession(sql: Sql, c: Context): Promise<void> {
-  const token = getCookie(c, SESSION_COOKIE)
-  if (token) await sql`DELETE FROM sessions WHERE token_hash = ${sha256(token)}`
+export function clearSessionCookie(c: Context): void {
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: isHttps(c) })
 }
 
-/** Sign the person out of every browser. Used when an account is deleted. */
-export async function destroyAllSessions(sql: Sql, userId: string): Promise<void> {
-  await sql`DELETE FROM sessions WHERE user_id = ${userId}`
+/**
+ * Sign out. The cookie is cleared no matter what; the row goes if the
+ * database is reachable, and otherwise expires on its own. A sign-out that
+ * left the browser holding a live token because the database was down would
+ * be worse than an orphaned row.
+ */
+export async function destroySession(sql: Sql | null, c: Context): Promise<void> {
+  const token = getCookie(c, SESSION_COOKIE)
+  clearSessionCookie(c)
+  if (sql && token) {
+    await sql`DELETE FROM sessions WHERE token_hash = ${sha256(token)}`.catch((err: Error) =>
+      console.error("session delete failed:", err.message)
+    )
+  }
 }
 
 interface SessionRow {
@@ -110,15 +127,31 @@ async function resolveSession(sql: Sql, token: string): Promise<SessionUser | nu
   }
 }
 
+/** Paths whose responses never depend on who is asking. */
+const SKIP_PREFIXES = ["/api/", "/assets/", "/fonts/", "/img/"]
+const SKIP_EXACT = new Set(["/healthz", "/favicon.svg", "/openapi.json", "/llms.txt", "/robots.txt", "/sitemap.xml", "/docs"])
+
+export function isUserAgnosticPath(path: string): boolean {
+  return SKIP_EXACT.has(path) || SKIP_PREFIXES.some((p) => path.startsWith(p))
+}
+
 /**
- * Attach the signed-in user to every request. A database error here is
+ * Attach the signed-in user to every page request. A database error here is
  * logged and treated as "not signed in": a broken session store must degrade
  * to the read-only site, never to an error page.
  */
 export const sessionMiddleware = (): MiddlewareHandler<AppEnv> => {
   return async (c, next) => {
-    let user: SessionUser | null = null
     const sql = getDb()
+    c.set("accountsAvailable", sql !== null)
+    c.set("user", null)
+
+    if (isUserAgnosticPath(c.req.path)) {
+      await next()
+      return
+    }
+
+    let user: SessionUser | null = null
     const token = getCookie(c, SESSION_COOKIE)
     if (sql && token) {
       try {
@@ -129,9 +162,10 @@ export const sessionMiddleware = (): MiddlewareHandler<AppEnv> => {
     }
     c.set("user", user)
     await next()
-    if (user) {
-      c.res.headers.set("Cache-Control", "private, no-store")
-      c.res.headers.append("Vary", "Cookie")
-    }
+
+    // Every page body depends on the cookie (the nav differs), so say so to
+    // any shared cache; a signed-in body must not be stored at all.
+    c.res.headers.append("Vary", "Cookie")
+    if (user) c.res.headers.set("Cache-Control", "private, no-store")
   }
 }

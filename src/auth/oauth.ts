@@ -9,8 +9,9 @@
  *
  * `state` is bound twice: to a short-lived cookie in the browser that started
  * the flow, and to a single-use row in auth_challenges. The callback must
- * match both. The provider's access token is used for exactly one request,
- * the profile fetch, and then dropped.
+ * match both. The cookie is per provider, so starting a GitHub sign-in and
+ * then a Discord one does not invalidate the first. The provider's access
+ * token is used for exactly one request, the profile fetch, and then dropped.
  */
 
 import type { Context } from "hono"
@@ -20,8 +21,9 @@ import { requestOrigin } from "../lib/request-origin"
 import { consumeChallenge, createChallenge } from "./challenges"
 import type { OAuthProvider } from "./config"
 
-const STATE_COOKIE = "ethglossary-oauth"
 const STATE_COOKIE_MAX_AGE = 10 * 60
+
+const stateCookie = (provider: OAuthProvider) => `ethglossary-oauth-${provider.id}`
 
 export class OAuthError extends Error {
   constructor(
@@ -44,7 +46,7 @@ export async function startOAuth(
   nextPath: string | null
 ): Promise<Response> {
   const state = await createChallenge(sql, "oauth_state", provider.id, nextPath)
-  setCookie(c, STATE_COOKIE, state, {
+  setCookie(c, stateCookie(provider), state, {
     httpOnly: true,
     secure: requestOrigin(c.req).startsWith("https://"),
     sameSite: "Lax",
@@ -63,7 +65,8 @@ export async function startOAuth(
 
 export interface OAuthIdentity {
   subject: string
-  handle: string | null
+  /** undefined when the profile did not include one; leaves a stored handle alone. */
+  handle: string | undefined
   nextPath: string | null
 }
 
@@ -71,8 +74,8 @@ export interface OAuthIdentity {
 export async function finishOAuth(sql: Sql, c: Context, provider: OAuthProvider): Promise<OAuthIdentity> {
   const code = c.req.query("code")
   const state = c.req.query("state")
-  const cookieState = getCookie(c, STATE_COOKIE)
-  deleteCookie(c, STATE_COOKIE, { path: "/auth" })
+  const cookieState = getCookie(c, stateCookie(provider))
+  deleteCookie(c, stateCookie(provider), { path: "/auth" })
 
   if (c.req.query("error")) {
     throw new OAuthError(`${provider.label} did not authorize the sign-in (${c.req.query("error")})`)

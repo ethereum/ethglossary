@@ -574,8 +574,8 @@
   .max-w-6xl {
     max-width: var(--container-6xl);
   }
-  .max-w-\[12rem\] {
-    max-width: 12rem;
+  .max-w-48 {
+    max-width: calc(var(--spacing) * 48);
   }
   .max-w-\[302px\] {
     max-width: 302px;

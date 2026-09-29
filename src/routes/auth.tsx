@@ -5,10 +5,13 @@
  * or it was unreachable at boot) the pages say so with a 503 and the rest of
  * the site is unaffected.
  *
- * Form posts are protected by Hono's CSRF middleware, which checks the
- * Origin header against the request's own origin. The two JSON endpoints
- * require `Content-Type: application/json`, which forces a CORS preflight
- * from any other origin, and check Origin themselves as well.
+ * Middleware is registered on explicit prefixes, never `*`: a sub-app's
+ * wildcard middleware is merged into the parent as `ALL /*` and would apply
+ * to whatever is mounted after this. Form posts are protected by Hono's CSRF
+ * middleware, which checks the Origin header against the request's own
+ * origin. The two JSON endpoints require `Content-Type: application/json`,
+ * which forces a CORS preflight from any other origin, and check Origin
+ * themselves as well.
  */
 
 import { Hono } from "hono"
@@ -21,27 +24,27 @@ import { AccountPage } from "../ui/pages/account"
 import { getDb } from "../db/client"
 import type { Sql } from "../db/client"
 import { requestOrigin } from "../lib/request-origin"
-import { languageFromCookie } from "../lib/negotiate-language"
-import type { PageUrl } from "../ui/layout"
+import { navLang, pageUrl } from "../lib/page-context"
 import { authConfig, oauthProvider } from "../auth/config"
 import { safeNextPath } from "../auth/challenges"
 import { finishOAuth, OAuthError, startOAuth } from "../auth/oauth"
-import { createSession, destroySession } from "../auth/session"
+import { clearSessionCookie, createSession, destroySession } from "../auth/session"
 import type { AppEnv } from "../auth/session"
 import { issueNonce, SiweError, verifySiwe } from "../auth/siwe"
-import {
-  AccountBannedError,
-  deleteAccount,
-  findOrCreateUser,
-  shortAddress,
-  updateDisplayName,
-} from "../auth/users"
+import { allow, clientKey } from "../auth/ratelimit"
+import { AccountBannedError, deleteAccount, findOrCreateUser, shortAddress, updateDisplayName } from "../auth/users"
 
 const app = new Hono<AppEnv>()
 
+const UNAVAILABLE = "Accounts are temporarily unavailable. The glossary itself is unaffected."
+
 /** Same-origin only: the allowed origin is the request's own, never a constant. */
-app.use("*", csrf({ origin: (origin, c) => origin === requestOrigin(c.req) }))
-app.use("*", bodyLimit({ maxSize: 16 * 1024 }))
+const sameOrigin = csrf({ origin: (origin, c) => origin === requestOrigin(c.req) })
+const smallBody = bodyLimit({ maxSize: 16 * 1024 })
+for (const path of ["/auth/*", "/signin", "/account", "/account/*"]) {
+  app.use(path, sameOrigin)
+  app.use(path, smallBody)
+}
 
 /*
  * A database that was reachable at boot and is not any more (a restart, a
@@ -60,19 +63,18 @@ app.onError((err, c) => {
   return signInPage(c, { error: UNAVAILABLE, status: 503 })
 })
 
-const UNAVAILABLE = "Accounts are temporarily unavailable. The glossary itself is unaffected."
-
-const pageUrl = (c: Context): PageUrl => ({ origin: requestOrigin(c.req), path: new URL(c.req.url).pathname })
-const activeLang = (c: Context) => languageFromCookie(c.req.header("Cookie"))
 const nextFromQuery = (c: Context) => safeNextPath(c.req.query("next"))
 
-const signInPage = (c: Context, opts: { error?: string; next?: string | null; status?: 400 | 401 | 502 | 503 }) =>
+const signInPage = (
+  c: Context,
+  opts: { error?: string; next?: string | null; status?: 400 | 401 | 429 | 502 | 503 }
+) =>
   c.html(
     <SignInPage
       providers={authConfig().providers.map((p) => ({ id: p.id, label: p.label }))}
       next={opts.next ?? nextFromQuery(c)}
       error={opts.error}
-      activeLang={activeLang(c)}
+      activeLang={navLang(c)}
       url={pageUrl(c)}
     />,
     opts.status ?? 200
@@ -80,9 +82,7 @@ const signInPage = (c: Context, opts: { error?: string; next?: string | null; st
 
 /** The database, or a 503 page explaining that accounts are unavailable. */
 async function requireDb(c: Context): Promise<Sql | Response> {
-  const sql = getDb()
-  if (sql) return sql
-  return signInPage(c, { error: UNAVAILABLE, status: 503 })
+  return getDb() ?? signInPage(c, { error: UNAVAILABLE, status: 503 })
 }
 
 /** JSON endpoints: same-origin, JSON body, database present. */
@@ -92,9 +92,16 @@ function jsonPrecheck(c: Context): Sql | Response {
   if (!/^application\/json\b/i.test(c.req.header("Content-Type") ?? "")) {
     return c.json({ error: "expected application/json" }, 415)
   }
-  const sql = getDb()
-  return sql ?? c.json({ error: "accounts are temporarily unavailable" }, 503)
+  return getDb() ?? c.json({ error: "accounts are temporarily unavailable" }, 503)
 }
+
+/*
+ * The two endpoints anyone can hit that create a row. Thirty starts per ten
+ * minutes per address is generous for a person and uninteresting for a loop.
+ */
+const START_LIMIT = 30
+const START_WINDOW_MS = 10 * 60 * 1000
+const startAllowed = (c: Context) => allow("auth-start", clientKey(c), START_LIMIT, START_WINDOW_MS)
 
 // ------------------------------------------------------------------ pages
 
@@ -109,7 +116,7 @@ app.get("/account", (c) => {
   const user = c.var.user
   if (!user) return c.redirect("/signin?next=%2Faccount", 302)
   return c.html(
-    <AccountPage user={user} saved={c.req.query("saved") === "1"} activeLang={activeLang(c)} url={pageUrl(c)} />
+    <AccountPage user={user} saved={c.req.query("saved") === "1"} activeLang={navLang(c)} url={pageUrl(c)} />
   )
 })
 
@@ -130,13 +137,12 @@ app.post("/account/delete", async (c) => {
   const sql = await requireDb(c)
   if (sql instanceof Response) return sql
   await deleteAccount(sql, user.id)
-  await destroySession(sql, c)
+  clearSessionCookie(c)
   return c.redirect("/", 303)
 })
 
 app.post("/auth/signout", async (c) => {
-  const sql = getDb()
-  if (sql) await destroySession(sql, c)
+  await destroySession(getDb(), c)
   return c.redirect("/", 303)
 })
 
@@ -147,6 +153,9 @@ app.get("/auth/:provider", async (c) => {
   if (!provider) return c.notFound()
   const sql = await requireDb(c)
   if (sql instanceof Response) return sql
+  if (!startAllowed(c)) {
+    return signInPage(c, { error: "Too many sign-in attempts from this address. Wait a few minutes.", status: 429 })
+  }
   return startOAuth(sql, c, provider, nextFromQuery(c))
 })
 
@@ -160,13 +169,14 @@ app.get("/auth/:provider/callback", async (c) => {
     const identity = await finishOAuth(sql, c, provider)
     const user = await findOrCreateUser(sql, provider.id, identity.subject, {
       handle: identity.handle,
-      displayName: identity.handle,
-      ensName: null,
+      displayName: identity.handle ?? null,
     })
     await createSession(sql, c, user.id)
     return c.redirect(identity.nextPath ?? "/account", 303)
   } catch (err) {
-    return signInFailure(c, err)
+    if (err instanceof OAuthError) return signInPage(c, { error: err.message, status: err.status })
+    if (err instanceof AccountBannedError) return signInPage(c, { error: err.message, status: 401 })
+    throw err
   }
 })
 
@@ -175,11 +185,11 @@ app.get("/auth/:provider/callback", async (c) => {
 app.post("/auth/siwe/nonce", async (c) => {
   const sql = jsonPrecheck(c)
   if (sql instanceof Response) return sql
+  c.header("Cache-Control", "no-store")
+  if (!startAllowed(c)) return c.json({ error: "too many sign-in attempts from this address; wait a few minutes" }, 429)
   const body = (await c.req.json().catch(() => ({}))) as { next?: unknown }
   const next = safeNextPath(typeof body.next === "string" ? body.next : null)
-  const nonce = await issueNonce(sql, next)
-  c.header("Cache-Control", "no-store")
-  return c.json({ nonce })
+  return c.json(await issueNonce(sql, next))
 })
 
 app.post("/auth/siwe/verify", async (c) => {
@@ -195,29 +205,21 @@ app.post("/auth/siwe/verify", async (c) => {
       new URL(origin).host,
       origin,
       authConfig().siwe.rpcUrl,
-      String(body.message ?? ""),
-      String(body.signature ?? "")
+      body.message,
+      body.signature
     )
     const user = await findOrCreateUser(sql, "siwe", identity.address.toLowerCase(), {
       handle: null,
-      displayName: identity.ensName ?? shortAddress(identity.address),
       ensName: identity.ensName,
+      displayName: identity.ensName ?? shortAddress(identity.address),
     })
     await createSession(sql, c, user.id)
     return c.json({ ok: true, next: identity.nextPath ?? "/account" })
   } catch (err) {
     if (err instanceof SiweError) return c.json({ error: err.message }, err.status)
     if (err instanceof AccountBannedError) return c.json({ error: err.message }, 403)
-    console.error("siwe verify failed:", err instanceof Error ? err.message : err)
-    return c.json({ error: "sign-in failed" }, 500)
+    throw err
   }
 })
-
-function signInFailure(c: Context, err: unknown) {
-  if (err instanceof OAuthError) return signInPage(c, { error: err.message, status: err.status })
-  if (err instanceof AccountBannedError) return signInPage(c, { error: err.message, status: 401 })
-  console.error("sign-in failed:", err instanceof Error ? err.message : err)
-  return signInPage(c, { error: "Sign-in failed. Please try again.", status: 502 })
-}
 
 export default app

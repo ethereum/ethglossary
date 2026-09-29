@@ -417,18 +417,30 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
   request is https), stored as a SHA-256 hash. Thirty-day sliding expiry,
   ninety-day cap. The middleware puts the user on `c.var.user`; page code
   reads it through `currentUser()` in `src/ui/layout.tsx` via Hono's
-  context storage, so no page threads a prop. Any response for a signed-in
-  person is `Cache-Control: private, no-store`.
+  context storage, so no page threads a prop. The middleware runs for pages
+  only (`isUserAgnosticPath` skips `/api/*`, static assets, `/healthz` and
+  the crawler files), adds `Vary: Cookie` to every page, and marks any
+  response for a signed-in person `Cache-Control: private, no-store`.
 - **Challenges** (`src/auth/challenges.ts`): OAuth `state` and SIWE nonces
-  are single-use, ten minutes, stored hashed. `state` is also bound to a
-  cookie on the browser that started the flow. `next` is accepted only as a
-  same-origin path (`safeNextPath`), so sign-in can never redirect off-site.
+  are single-use, ten minutes, stored hashed, swept on every insert and
+  consume. `state` is also bound to a per-provider cookie on the browser that
+  started the flow. The SIWE timestamps are issued by the server with the
+  nonce, so a slow device clock cannot sign an already-expired message.
+  `next` is accepted only as a same-origin path outside `/signin` and
+  `/auth` (`safeNextPath`), so sign-in can never redirect off-site or loop.
+- **Rate limit** (`src/auth/ratelimit.ts`): the two unauthenticated
+  endpoints that write a row, the SIWE nonce and the OAuth start, allow 30
+  starts per 10 minutes per client address, in memory per replica. The
+  address is the last `X-Forwarded-For` entry, the one our own proxy added.
 - **CSRF:** Hono's `csrf()` on every auth and account route, with the
   allowed origin computed from the request. The two JSON endpoints require
   `Content-Type: application/json` and check `Origin` themselves.
 - **No database, no accounts:** `/signin` answers 503, the nav shows the
-  inert "coming soon" button, and everything else is unchanged. Sign-in
-  must never be a reason the glossary is down.
+  inert "coming soon" button, and everything else is unchanged. The pool is
+  published to `getDb()` only after the schema is confirmed current, so the
+  site never advertises accounts it cannot serve; a database that drops
+  later turns auth routes into 503s and sign-out still clears the cookie.
+  Sign-in must never be a reason the glossary is down.
 - **Deleting an account** tombstones the row (subject, handle, display name
   and ENS nulled, `deleted_at` set) so feedback keeps an anonymous author
   that still groups one account's contributions together. The person can
@@ -441,7 +453,12 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
   at `localhost`, not `127.0.0.1`, because the callback URL is derived from
   the address in the browser. For headless tests, `GITHUB_OAUTH_ORIGIN`,
   `GITHUB_API_ORIGIN` and `DISCORD_ORIGIN` point the flows at a mock
-  provider. They are never set in production.
+  provider; they are ignored, with a warning, when `NODE_ENV` is
+  `production`.
+- **Middleware in `src/routes/auth.tsx` is on explicit prefixes, never
+  `*`**, and the sub-app is mounted last in `src/index.ts`: a sub-app's
+  wildcard middleware and error handler also apply to routes registered
+  after its mount point.
 - **Votes and suggestions are still gated** by `ACCOUNTS_ENABLED` in
   `src/lib/constants.ts`. That flips in the feedback PR, not here.
 

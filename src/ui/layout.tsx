@@ -10,7 +10,6 @@ import type { Child } from "hono/jsx"
 import { raw } from "hono/html"
 import { getContext } from "hono/context-storage"
 import type { AppEnv, SessionUser } from "../auth/session"
-import { getDb } from "../db/client"
 import { Icon } from "./icon"
 import { ROW_LINK_ISLAND } from "./row-link"
 import { TOOLTIP_ISLAND } from "./tooltip"
@@ -162,6 +161,15 @@ export function currentUser(): SessionUser | null {
   }
 }
 
+/** Whether sign-in is possible at all right now, as the session middleware determined. */
+function accountsAvailable(): boolean {
+  try {
+    return getContext<AppEnv>().var.accountsAvailable === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * The sign-in control.
  *
@@ -180,7 +188,7 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
     return (
       <span class={`flex items-center gap-3 ${block ? "w-full justify-between" : ""}`}>
         <a
-          class="max-w-[12rem] truncate text-label-md leading-6 font-bold text-foreground-strong no-underline hover:underline"
+          class="max-w-48 truncate text-label-md leading-6 font-bold text-foreground-strong no-underline hover:underline"
           href="/account"
           title="Your account"
         >
@@ -195,7 +203,7 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
     )
   }
 
-  if (!getDb()) {
+  if (!accountsAvailable()) {
     return (
       <button type="button" class={`cursor-not-allowed ${pill}`} aria-disabled="true" data-tip={COMING_SOON_TITLE}>
         Sign in
