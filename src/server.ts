@@ -86,20 +86,74 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   })
 }
 
-let db: Sql | null = null
-if (process.env.DATABASE_URL) {
+/**
+ * Open the pool and bring the schema up to date. Returns null, with the pool
+ * closed again, when that cannot be done inside the budget; the caller
+ * decides whether to try again later.
+ */
+async function connectDatabase(url: string, quiet: boolean): Promise<Sql | null> {
   try {
-    db = openDatabase(process.env.DATABASE_URL)
+    const sql = openDatabase(url)
     // The database enforces the budget itself through lock and statement
     // timeouts; the outer timer sits just past it as the backstop.
-    const applied = await withTimeout(migrate(db, { budgetMs }), budgetMs + 5_000, "schema migration")
+    const applied = await withTimeout(migrate(sql, { budgetMs }), budgetMs + 5_000, "schema migration")
     console.log(applied.length ? `applied migrations: ${applied.join(", ")}` : "schema up to date")
+    return sql
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    const reason = err instanceof MigrationFilesError ? `build problem: ${message}` : `database unavailable: ${message}`
-    console.error(`${reason}; serving without feedback features`)
     await closeDatabase(1)
-    db = null
+    if (err instanceof MigrationFilesError) throw err
+    if (!quiet) console.error(`database unavailable: ${err instanceof Error ? err.message : String(err)}`)
+    return null
+  }
+}
+
+function startIndexer(sql: Sql) {
+  describeBuild()
+    .then((build) => runIndexer(sql, build))
+    .then((r) => {
+      const detail = r.status === "indexed" ? ` (${r.first ? "first run, " : ""}${r.changes} changes)` : ""
+      console.log(`indexer: ${r.status}${detail}`)
+    })
+    .catch((err) => console.error("indexer failed:", err instanceof Error ? err.message : err))
+}
+
+/** How often to look again for a database that was not there at boot. */
+const RECONNECT_MS = 30_000
+
+let db: Sql | null = null
+const databaseUrl = process.env.DATABASE_URL
+if (databaseUrl) {
+  try {
+    db = await connectDatabase(databaseUrl, false)
+  } catch (err) {
+    // Missing migration files: a build problem, not something that heals.
+    console.error(`build problem: ${(err as Error).message}; serving without feedback features`)
+  }
+  if (!db) {
+    /*
+     * Serve without accounts now, but keep looking. A database that was down
+     * during a rollout, or a local container started after the dev server,
+     * should not need every replica restarted by hand. getDb() turns non-null
+     * the moment this succeeds, and the sign-in control follows on the next
+     * request.
+     */
+    console.error(`serving without feedback features; retrying the database every ${RECONNECT_MS / 1000}s`)
+    const retry = async () => {
+      let sql: Sql | null = null
+      try {
+        sql = await connectDatabase(databaseUrl, true)
+      } catch {
+        return // build problem; give up quietly
+      }
+      if (sql) {
+        db = sql
+        console.log("database connected; feedback features enabled")
+        startIndexer(sql)
+      } else {
+        setTimeout(retry, RECONNECT_MS).unref()
+      }
+    }
+    setTimeout(retry, RECONNECT_MS).unref()
   }
 } else {
   console.log("DATABASE_URL not set, serving without feedback features")
@@ -118,16 +172,7 @@ const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   )
 })
 
-if (db) {
-  const sql = db
-  describeBuild()
-    .then((build) => runIndexer(sql, build))
-    .then((r) => {
-      const detail = r.status === "indexed" ? ` (${r.first ? "first run, " : ""}${r.changes} changes)` : ""
-      console.log(`indexer: ${r.status}${detail}`)
-    })
-    .catch((err) => console.error("indexer failed:", err instanceof Error ? err.message : err))
-}
+if (db) startIndexer(db)
 
 /*
  * A rollout sends SIGTERM and waits. Stop accepting connections, let in-flight
