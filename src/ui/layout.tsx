@@ -25,6 +25,7 @@ import github from "./icons/github.svg"
 import xMark from "./icons/x.svg"
 import { ExternalLink } from "./link"
 import {
+  ACCOUNTS_ENABLED,
   COMING_SOON_TITLE,
   DISCORD_URL,
   FARCASTER_URL,
@@ -173,16 +174,28 @@ function accountsAvailable(): boolean {
 /**
  * The sign-in control.
  *
- * Three states. Signed in: the display name, linking to the account page,
- * with a sign-out form beside it. Signed out with accounts available: a
- * link to /signin that returns to the current page. No database: the inert
- * "coming soon" button, so the page still reads as the finished thing.
+ * Until ACCOUNTS_ENABLED flips, the nav is exactly what it was before accounts
+ * existed: the inert "coming soon" button, for everyone, whatever the
+ * database says. /signin and /account still answer by URL, so the sign-in
+ * flows can be verified in production before there is anything for a
+ * signed-in person to do. After the flip, three states. Signed in: the
+ * display name, linking to the account page, with a sign-out form beside it.
+ * Signed out with accounts available: a link to /signin that returns to the
+ * current page. No database: the inert button again.
  */
 export const SignInControl = ({ block, path }: { block?: boolean; path?: string } = {}) => {
   const user = currentUser()
   const pill = `whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
     block ? "w-full text-center" : ""
   }`
+
+  if (!ACCOUNTS_ENABLED) {
+    return (
+      <button type="button" class={`cursor-not-allowed ${pill}`} aria-disabled="true" data-tip={COMING_SOON_TITLE}>
+        Sign in
+      </button>
+    )
+  }
 
   if (user) {
     return (

@@ -465,8 +465,11 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
   `*`**, and the sub-app is mounted last in `src/index.ts`: a sub-app's
   wildcard middleware and error handler also apply to routes registered
   after its mount point.
-- **Votes and suggestions are still gated** by `ACCOUNTS_ENABLED` in
-  `src/lib/constants.ts`. That flips in the feedback PR, not here.
+- **Nothing is visible yet.** `ACCOUNTS_ENABLED` in `src/lib/constants.ts`
+  is false: the nav shows the same inert "coming soon" button it always
+  did, and votes and suggestions stay disabled. `/signin` and `/account`
+  answer by URL so the flows can be verified in production. The flag flips
+  in the feedback PR, and the whole surface appears at once.
 
 ## Adding a glossary term
 
