@@ -431,7 +431,13 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
 - **Rate limit** (`src/auth/ratelimit.ts`): the two unauthenticated
   endpoints that write a row, the SIWE nonce and the OAuth start, allow 30
   starts per 10 minutes per client address, in memory per replica. The
-  address is the last `X-Forwarded-For` entry, the one our own proxy added.
+  address is the `X-Forwarded-For` entry `TRUSTED_PROXY_HOPS` places from
+  the right (default 1: one ingress appends the header). If the key cannot
+  be resolved, or resolves to a private or loopback address (a proxy hop
+  that was not counted), the limit is **skipped with a warning** rather than
+  shared by every visitor; a limiter that cannot tell clients apart must not
+  be enforced. The first trip per address per window is logged. Local
+  development is never limited, since the client is loopback.
 - **CSRF:** Hono's `csrf()` on every auth and account route, with the
   allowed origin computed from the request. The two JSON endpoints require
   `Content-Type: application/json` and check `Origin` themselves.
