@@ -44,14 +44,12 @@ export const LANG_COOKIE = "ethglossary-lang"
 export const LANG_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 /**
- * Whether the accounts system is live.
+ * Whether the accounts system is live for visitors.
  *
- * Sign-in, votes and suggestions all depend on a database and OAuth that ship
- * in a later phase. Until then every control that would need an account is
- * rendered disabled and labelled, rather than hidden -- a reviewer should be
- * able to see what the page will do, and understand why they cannot do it yet.
- *
- * Flip this to true when the auth phase lands.
+ * Sign-in is built and reachable at /signin, but the nav does not link to it
+ * and every vote and suggestion control stays disabled and labelled until
+ * there is something a signed-in person can do. Flip this in the PR that
+ * ships votes and suggestions, and the whole surface appears at once.
  */
 export const ACCOUNTS_ENABLED = false
 

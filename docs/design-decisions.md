@@ -83,9 +83,27 @@ Post-1.0, a deprecation-then-removal cycle crosses a major version.
 
 **Read auth: open, forever. No API key for reads.**
 
-Future write auth (Phase 2):
-- **SIWE (Sign-In With Ethereum)** as primary
-- Then **Discord**, **GitHub**, **Farcaster**, **passkeys / magic links**
+Write auth (decided 2026-09-09, shipped in the sign-in PR):
+
+- **GitHub, Discord and Sign-In with Ethereum** in the first release;
+  **passkeys** next. One sign-in method per account; no linking, no roles,
+  no admin users. Farcaster is not planned unless asked.
+- **No passwords, no emails.** No email scope is requested from any
+  provider; magic links are out for that reason. The only thing stored about
+  a person is the provider's stable id, plus an optional display name and a
+  verified ENS name.
+- **Scopes are the minimum:** none for GitHub, `identify` for Discord.
+  Provider tokens are used for one profile request and never stored.
+- **Sessions** are opaque random tokens stored hashed in Postgres, sent as an
+  HttpOnly cookie. No JWTs. OAuth state and SIWE nonces are stored hashed
+  too.
+- **OAuth is hand-rolled** (two providers, about sixty lines each). Arctic
+  was deprecated in July 2026; `@hono/oauth-providers` bundles Google,
+  Microsoft and Facebook modules and is out on that ground.
+- **`ETH_RPC_URL` is optional:** without it SIWE accepts EOA wallets only and
+  records no ENS name. The default is a keyless public endpoint.
+- **Accounts are optional to the site.** Without a database, sign-in is a
+  503 and the glossary is unaffected.
 - **No Google.** Ever.
 
 ## Payload caps

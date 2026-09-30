@@ -8,6 +8,8 @@
 
 import type { Child } from "hono/jsx"
 import { raw } from "hono/html"
+import { getContext } from "hono/context-storage"
+import type { AppEnv, SessionUser } from "../auth/session"
 import { Icon } from "./icon"
 import { ROW_LINK_ISLAND } from "./row-link"
 import { TOOLTIP_ISLAND } from "./tooltip"
@@ -23,6 +25,7 @@ import github from "./icons/github.svg"
 import xMark from "./icons/x.svg"
 import { ExternalLink } from "./link"
 import {
+  ACCOUNTS_ENABLED,
   COMING_SOON_TITLE,
   DISCORD_URL,
   FARCASTER_URL,
@@ -146,28 +149,103 @@ const NAV_ITEMS: Array<{ key: NavKey; href: string; label: string }> = [
 const navHref = (item: (typeof NAV_ITEMS)[number], activeLang?: string) =>
   item.key === "translations" && activeLang ? `/translations/${activeLang}` : item.href
 
-/** The gated sign-in control. Inert until ACCOUNTS_ENABLED; never a link. */
-export const SignInControl = ({ block }: { block?: boolean } = {}) => (
-  <button
-    type="button"
-    class={`cursor-not-allowed whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
-      block ? "w-full" : ""
-    }`}
-    aria-disabled="true"
-    data-tip={COMING_SOON_TITLE}
-  >
-    Sign in
-  </button>
-)
+/**
+ * Who is signed in, if anyone, read from the request context so no page has
+ * to thread it through. Null outside a request (never the case in practice)
+ * and for visitors without a session.
+ */
+export function currentUser(): SessionUser | null {
+  try {
+    return getContext<AppEnv>().var.user ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Whether sign-in is possible at all right now, as the session middleware determined. */
+function accountsAvailable(): boolean {
+  try {
+    return getContext<AppEnv>().var.accountsAvailable === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The sign-in control.
+ *
+ * Until ACCOUNTS_ENABLED flips, the nav is exactly what it was before accounts
+ * existed: the inert "coming soon" button, for everyone, whatever the
+ * database says. /signin and /account still answer by URL, so the sign-in
+ * flows can be verified in production before there is anything for a
+ * signed-in person to do. After the flip, three states. Signed in: the
+ * display name, linking to the account page, with a sign-out form beside it.
+ * Signed out with accounts available: a link to /signin that returns to the
+ * current page. No database: the inert button again.
+ */
+export const SignInControl = ({ block, path }: { block?: boolean; path?: string } = {}) => {
+  const user = currentUser()
+  const pill = `whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
+    block ? "w-full" : ""
+  }`
+
+  if (!ACCOUNTS_ENABLED) {
+    return (
+      <button type="button" class={`cursor-not-allowed ${pill}`} aria-disabled="true" data-tip={COMING_SOON_TITLE}>
+        Sign in
+      </button>
+    )
+  }
+
+  if (user) {
+    return (
+      <span class={`flex items-center gap-3 ${block ? "w-full justify-between" : ""}`}>
+        <a
+          class="max-w-48 truncate text-label-md leading-6 font-bold text-foreground-strong no-underline hover:underline"
+          href="/account"
+          title="Your account"
+        >
+          {user.displayName ?? "Account"}
+        </a>
+        <form method="post" action="/auth/signout">
+          <button type="submit" class="text-label-md text-foreground-subtle hover:text-foreground-strong">
+            Sign out
+          </button>
+        </form>
+      </span>
+    )
+  }
+
+  if (!accountsAvailable()) {
+    return (
+      <button type="button" class={`cursor-not-allowed ${pill}`} aria-disabled="true" data-tip={COMING_SOON_TITLE}>
+        Sign in
+      </button>
+    )
+  }
+
+  const next = path && path !== "/signin" ? `?next=${encodeURIComponent(path)}` : ""
+  return (
+    <a
+      class={`inline-block text-center ${pill} no-underline transition-[filter] hover:brightness-110 hover:no-underline`}
+      href={`/signin${next}`}
+    >
+      Sign in
+    </a>
+  )
+}
 
 export const Nav = ({
   active,
   brand = "default",
   activeLang,
+  path,
 }: {
   active: NavKey
   brand?: BrandTone
   activeLang?: string
+  /** Current page, so "Sign in" can come back to it. */
+  path?: string
 }) => (
   <nav
     class={`z-20 h-16 ${
@@ -244,14 +322,9 @@ export const Nav = ({
       )}
 
       <div class="ml-auto flex items-center gap-3">
-        {/*
-          Never a link to /signin in v1 -- the route does not exist, and the
-          tooltip is what tells the reader why. It becomes a link when
-          ACCOUNTS_ENABLED flips and a sign-in page exists to point at.
-          Hidden below md, where it lives in the drawer instead.
-        */}
+        {/* Hidden below md, where it lives in the drawer instead. */}
         <span class="hidden md:block">
-          <SignInControl />
+          <SignInControl path={path} />
         </span>
         <button
           id="theme-toggle"
@@ -340,7 +413,7 @@ export const Nav = ({
         ))}
 
         <div class="mt-4">
-          <SignInControl block />
+          <SignInControl block path={path} />
         </div>
       </div>
     </dialog>
@@ -462,7 +535,7 @@ export const Layout = ({
       the bottom of the viewport rather than floating it mid-screen.
     */}
     <body class="flex min-h-dvh flex-col">
-      <Nav active={nav} brand={brand} activeLang={activeLang} />
+      <Nav active={nav} brand={brand} activeLang={activeLang} path={url?.path} />
       {/*
         Always a <main>; `bare` only controls whether it carries the shell
         container. Without this the landing page has no main landmark at all.

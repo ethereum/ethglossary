@@ -30,14 +30,13 @@ import { getLanguageMeta } from "../lib/language-meta"
 import type { TranslationEntry } from "../lib/glossary-data"
 import { CONTEXT_TYPES, EXEMPLAR_KEY, applicableContexts, slotValue } from "../lib/context-types"
 import type { ContextId } from "../lib/context-types"
-import { languageFromCookie } from "../lib/negotiate-language"
 import { LANG_COOKIE, LANG_COOKIE_MAX_AGE } from "../lib/constants"
 import type { PageUrl } from "../ui/layout"
-import { requestOrigin } from "../lib/request-origin"
-import type { OriginRequest } from "../lib/request-origin"
+import type { AppEnv } from "../auth/session"
+import { navLang, pageUrl } from "../lib/page-context"
 import ethglossaryMark from "../ui/icons/ethglossary.svg"
 
-const app = new OpenAPIHono()
+const app = new OpenAPIHono<AppEnv>()
 
 /**
  * Remember the language a reviewer is actually looking at, so /translate and
@@ -51,23 +50,8 @@ function rememberLanguage(c: { header: (k: string, v: string) => void }, lang: s
   )
 }
 
-/** The language on the nav's Translate tab, if one has been chosen. */
-const navLang = (c: { req: { header: (k: string) => string | undefined } }) =>
-  languageFromCookie(c.req.header("Cookie"))
-
-/**
- * Origin and path for the canonical link and share card.
- *
- * Read off the request every time rather than stored in a constant -- the
- * site has answered on a workers.dev host and on glossary.ethereum.org, and a
- * share card has to name whichever host the visitor actually reached. The
- * scheme comes from the proxy's forwarded header; see src/lib/request-origin.ts.
- * Query strings are dropped: ?category= is a filter, not a separate page.
- */
-const pageUrl = (c: { req: OriginRequest }): PageUrl => ({
-  origin: requestOrigin(c.req),
-  path: new URL(c.req.url).pathname,
-})
+// pageUrl() and navLang() live in src/lib/page-context.ts, shared with the
+// account routes.
 
 /** Master terms sorted for display, with their canonical key kept alongside. */
 function sortedTerms() {

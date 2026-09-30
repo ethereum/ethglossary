@@ -137,6 +137,10 @@ Wrangler is gone from the repo; do not add it back. The app is a plain Node serv
 
 `src/server.ts` opens the pool only when `DATABASE_URL` is set, and a migration or connection failure at startup is logged, not thrown. Feedback routes must check `getDb()` and answer 503 when it is null; the glossary and its API never depend on the store. Do not "fix" the startup path to crash on a database error.
 
-## 15. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
+## 15. Sign-in cookies are `Secure` only when the request is https
+
+`createSession` and the OAuth state cookie set `Secure` from `requestOrigin()`, which reads the proxy's `X-Forwarded-Proto`. In production that is https and the cookies are Secure; on the dev server over plain http they are not, or the browser would drop them. Do not hardcode `secure: true`. Browse the dev server at `localhost`, the host the development OAuth apps have as their callback; the callback URL is derived from the address in the browser.
+
+## 16. The public host is `glossary.ethereum.org`, behind a TLS-terminating proxy
 
 The container is reached over plain http, so the request URL says `http://`. Build every absolute URL through `requestOrigin()` (see item 8). Consumers should call the URL, not the GitHub repo path; the repo is `github.com/ethereum/ethglossary`.
