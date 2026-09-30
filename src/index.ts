@@ -12,6 +12,7 @@ import translations from "./routes/translations"
 import filter from "./routes/filter"
 import schema from "./routes/schema"
 import auth from "./routes/auth"
+import feedbackApi from "./routes/feedback"
 import { requestOrigin } from "./lib/request-origin"
 import { cacheControl } from "./lib/cache-control"
 import { sessionMiddleware } from "./auth/session"
@@ -52,9 +53,10 @@ app.use("*", async (c, next) => {
 })
 
 // CORS -- the public API and its descriptions are readable from anywhere.
-// Nothing under /auth or /account gets CORS headers: those are same-origin
-// only, and the browser's default is exactly that.
-app.use("/api/*", cors())
+// The feedback write API, /auth and /account get no CORS headers: those are
+// same-origin only, and the browser's default is exactly that.
+const publicCors = cors()
+app.use("/api/*", (c, next) => (c.req.path.startsWith("/api/v1/feedback") ? next() : publicCors(c, next)))
 app.use("/openapi.json", cors())
 app.use("/llms.txt", cors())
 
@@ -71,6 +73,15 @@ app.route("/api/v1", styleGuide)
 app.route("/api/v1", translations)
 app.route("/api/v1", filter)
 app.route("/api/v1", schema)
+app.route("/api/v1", feedbackApi)
+
+// The write API authenticates with the session cookie; say so in the spec.
+app.openAPIRegistry.registerComponent("securitySchemes", "cookieAuth", {
+  type: "apiKey",
+  in: "cookie",
+  name: "ethglossary-session",
+  description: "Set by signing in at /signin. Same-origin only.",
+})
 
 // OpenAPI spec. Server URL derived from the incoming request so this works
 // regardless of which host/domain the API is served from. See

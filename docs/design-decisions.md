@@ -106,6 +106,20 @@ Write auth (decided 2026-09-09, shipped in the sign-in PR):
   503 and the glossary is unaffected.
 - **No Google.** Ever.
 
+## Community feedback
+
+**Advisory, hash-anchored, private by default.** Decided 2026-09-09.
+
+- Feedback never changes the glossary. It is exported and reviewed by
+  maintainers; the edit path is a pull request against the JSON files.
+- Every vote or suggestion is about the exact value the reviewer saw,
+  keyed by its content hash, so a deploy that changes a slot resets that
+  slot for everyone and nothing is silently re-attributed.
+- Up/down counts are public. Suggestions and proposals are visible to their
+  author and to maintainers only, and no visitor ever sees another's name.
+- Progress and history are derived from content hashes and the startup
+  indexer, never stored as flags.
+
 ## Payload caps
 
 **1MB on `/filter`.** Zod-enforced via `FilterRequest`. Most translation pipelines hit much less than this; the cap exists to prevent worker DoS via giant payloads. (Initially set to 100KB; raised to 1MB after a real translation source file exceeded the lower cap.)

@@ -9,9 +9,18 @@
  * #909090, a slot term is Label-xl (Serif 400 20/20), a context label is
  * Label-md (Sans 400 14/14), and vote counts are Label-lg (Sans 400 16/16).
  *
- * Phase 0 renders the shell against the bundled glossary. Vote counts,
- * progress state and version history all arrive in later phases; until then
- * each surface renders its honest empty state rather than placeholder numbers.
+ * Feedback has three modes, decided by the route from the database and the
+ * session and passed in as `feedback.mode`:
+ *
+ *   off     no database (or accounts not yet enabled): every control is
+ *           rendered live and labelled "coming soon", counts show a dash
+ *   signin  database, no session: counts are real, every control explains
+ *           itself with a "Sign in" popover that comes back to this page
+ *   live    signed in: the feedback island wires the controls to the API
+ *
+ * Nothing a reader submits changes what this page shows for anyone else.
+ * Suggestions and proposals are visible to their author and the maintainers
+ * only; the counts are the one public signal.
  */
 
 import { raw } from "hono/html"
@@ -22,17 +31,21 @@ import arrowLeft from "lucide-static/icons/arrow-left.svg"
 import arrowRight from "lucide-static/icons/arrow-right.svg"
 import badgeCheck from "lucide-static/icons/badge-check.svg"
 import circleAlert from "lucide-static/icons/circle-alert.svg"
+import flag from "lucide-static/icons/flag.svg"
 import info from "lucide-static/icons/info.svg"
 import squarePen from "lucide-static/icons/square-pen.svg"
 import thumbsDown from "lucide-static/icons/thumbs-down.svg"
 import thumbsUp from "lucide-static/icons/thumbs-up.svg"
+import x from "lucide-static/icons/x.svg"
 import { TERM_FILTER_ISLAND } from "../islands"
+import { FEEDBACK_ISLAND } from "../feedback"
 import { CONTEXT_BY_ID, applicableContexts } from "../../lib/context-types"
 import type { ContextId } from "../../lib/context-types"
 import { sanitizeDefinition } from "../../lib/sanitize"
-import { ACCOUNTS_ENABLED, COMING_SOON_TITLE } from "../../lib/constants"
+import { COMING_SOON_TITLE } from "../../lib/constants"
 import { getLanguageMeta } from "../../lib/language-meta"
 import type { GlossaryTerm, TranslationEntry } from "../../lib/glossary-data"
+import type { HistoryEntry, Proposal, Suggestion, Tally } from "../../feedback/store"
 
 export type ProgressState = "none" | "partial" | "full"
 
@@ -41,6 +54,30 @@ export interface TermListItem {
   id: string
   term: string
   progress: ProgressState
+}
+
+export type FeedbackMode = "off" | "signin" | "live"
+
+export interface SlotFeedback {
+  hash: string
+  tally: Tally
+  mine: "up" | "down" | null
+}
+
+export interface FeedbackState {
+  mode: FeedbackMode
+  /** Where "Sign in" comes back to. */
+  signinHref: string
+  /** Hash of the English entry as rendered; anchors the flags. */
+  termHash: string
+  /** By context, for every applicable slot. */
+  slots: Record<string, SlotFeedback>
+  mySuggestions: Suggestion[]
+  myProposals: Proposal[]
+  /** Newest first. Empty when nothing has changed since history began. */
+  history: HistoryEntry[]
+  /** False when there is no database to read history from. */
+  historyAvailable: boolean
 }
 
 interface TranslatePageProps {
@@ -53,6 +90,7 @@ interface TranslatePageProps {
   }
   prevTermId?: string
   nextTermId?: string
+  feedback?: FeedbackState
   url?: PageUrl
 }
 
@@ -71,6 +109,31 @@ const PROGRESS_TONE: Record<ProgressState, { icon: string; text: string }> = {
   full: { icon: "text-teal", text: "text-teal" },
 }
 
+/**
+ * The attributes that make a control explain itself when it cannot act.
+ * `off` is the inert "coming soon" state the site has always shown; `signin`
+ * keeps the control looking live and answers a click with a popover that
+ * links to sign-in; `live` adds nothing and lets the island take the click.
+ */
+function gate(mode: FeedbackMode, signinHref: string, verb: string): Record<string, string> {
+  if (mode === "live") return {}
+  if (mode === "signin") {
+    return { "data-tip": `Sign in to ${verb}`, "data-tip-href": signinHref, "data-tip-link": "Sign in" }
+  }
+  return { "aria-disabled": "true", "data-tip": COMING_SOON_TITLE }
+}
+
+const OFF: FeedbackState = {
+  mode: "off",
+  signinHref: "/signin",
+  termHash: "",
+  slots: {},
+  mySuggestions: [],
+  myProposals: [],
+  history: [],
+  historyAvailable: false,
+}
+
 const SlotRow = ({
   context,
   value,
@@ -78,6 +141,9 @@ const SlotRow = ({
   lang,
   dir,
   confidence,
+  slot,
+  mode,
+  signinHref,
 }: {
   context: ContextId
   value: string
@@ -86,11 +152,33 @@ const SlotRow = ({
   dir: "ltr" | "rtl"
   /** Set only where it is worth flagging -- see `lowConfidence` below. */
   confidence?: "medium" | "low"
+  slot?: SlotFeedback
+  mode: FeedbackMode
+  signinHref: string
 }) => {
   const meta = CONTEXT_BY_ID[context]
+  const counts = mode === "off" || !slot
+  const voteButton = (direction: "up" | "down", svg: string, label: string) => (
+    <button
+      class="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-label-lg tabular-nums text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-pressed:text-teal aria-disabled:cursor-not-allowed"
+      type="button"
+      aria-pressed={slot?.mine === direction ? "true" : "false"}
+      aria-label={`${label} the ${meta.label} translation`}
+      data-context={context}
+      data-vote={direction}
+      {...gate(mode, signinHref, "vote")}
+    >
+      <Icon svg={svg} class="size-4.5" />
+      <span data-count="count">{counts ? "\u2013" : String(direction === "up" ? slot.tally.up : slot.tally.down)}</span>
+    </button>
+  )
 
   return (
-    <li class="overflow-hidden rounded-card border border-border bg-card">
+    <li
+      class="overflow-hidden rounded-card border border-border bg-card"
+      data-slot={context}
+      data-hash={slot?.hash ?? ""}
+    >
       <div class="flex items-center justify-between gap-4 px-4 py-3">
         {plurals ? (
           <span
@@ -118,40 +206,15 @@ const SlotRow = ({
         )}
 
         <span class="flex shrink-0 items-center gap-4">
-          <button
-            class="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-label-lg tabular-nums text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-disabled:cursor-not-allowed"
-            type="button"
-            aria-pressed="false"
-            aria-label={`Vote up the ${meta.label} translation`}
-            data-context={context}
-            data-vote="up"
-            aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-            data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
-          >
-            <Icon svg={thumbsUp} class="size-4.5" />
-            <span>&ndash;</span>
-          </button>
-          <button
-            class="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-label-lg tabular-nums text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-disabled:cursor-not-allowed"
-            type="button"
-            aria-pressed="false"
-            aria-label={`Vote down the ${meta.label} translation`}
-            data-context={context}
-            data-vote="down"
-            aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-            data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
-          >
-            <Icon svg={thumbsDown} class="size-4.5" />
-            <span>&ndash;</span>
-          </button>
+          {voteButton("up", thumbsUp, "Vote up")}
+          {voteButton("down", thumbsDown, "Vote down")}
           <button
             class="grid size-6 place-items-center rounded-md text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-disabled:cursor-not-allowed"
             type="button"
             aria-label={`Suggest a different ${meta.label} translation`}
             data-context={context}
             data-action="suggest"
-            aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-            data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
+            {...gate(mode, signinHref, "suggest a translation")}
           >
             <Icon svg={squarePen} class="size-5" />
           </button>
@@ -195,16 +258,99 @@ const SlotRow = ({
   )
 }
 
+/** One line of the Versions rail. */
+function describeChange(h: HistoryEntry): string {
+  const label = h.context ? CONTEXT_BY_ID[h.context as ContextId]?.label ?? h.context : ""
+  switch (h.kind) {
+    case "slot_changed":
+      return `${label} updated`
+    case "slot_added":
+      return `${label} added`
+    case "slot_removed":
+      return `${label} removed`
+    case "term_renamed":
+      return `Renamed from “${h.old_value}” to “${h.new_value}”`
+    case "term_changed":
+      return "English entry updated"
+    case "term_added":
+      return "Term added"
+    case "term_removed":
+      return "Term removed"
+    default:
+      return h.kind
+  }
+}
+
+const DIALOG =
+  "m-auto w-[min(32rem,calc(100vw-2rem))] rounded-card border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm"
+const FIELD =
+  "w-full rounded-sm border border-input bg-transparent px-3 py-2 text-body text-foreground placeholder:text-foreground-muted focus:border-accent"
+const PRIMARY =
+  "inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-label-md font-bold text-primary-foreground transition-[filter] hover:brightness-110 aria-busy:cursor-progress aria-busy:opacity-60"
+const GHOST = "rounded-full px-4 py-2 text-label-md text-foreground-subtle hover:text-foreground-strong"
+
+/**
+ * A proposal form in a <dialog>. The browser supplies the focus trap, the
+ * backdrop and Escape; the close button is a `<form method="dialog">` and
+ * needs no script. Rendered only in live mode: there is no point shipping a
+ * form the reader cannot submit.
+ */
+const ProposalDialog = ({
+  id,
+  formId,
+  title,
+  intro,
+  children,
+  submit,
+}: {
+  id: string
+  formId: string
+  title: string
+  intro: string
+  children?: unknown
+  submit: string
+}) => (
+  <dialog id={id} class={DIALOG} aria-labelledby={`${id}-title`}>
+    <div class="flex flex-col gap-4 p-6">
+      <div class="flex items-start justify-between gap-4">
+        <h2 id={`${id}-title`} class="font-serif text-h4 font-medium text-foreground-strong">
+          {title}
+        </h2>
+        <form method="dialog">
+          <button type="submit" class="grid size-8 place-items-center rounded-md text-foreground hover:bg-muted" aria-label="Close">
+            <Icon svg={x} class="size-5" />
+          </button>
+        </form>
+      </div>
+      <p class="text-body text-foreground-muted">{intro}</p>
+      <form id={formId} class="flex flex-col gap-3">
+        {children as never}
+        <p data-note role="alert" class="text-label-md text-rose" hidden></p>
+        <div class="mt-2 flex items-center gap-3">
+          <button type="submit" class={PRIMARY}>
+            {submit}
+          </button>
+          <button type="button" class={GHOST} onclick={`document.getElementById('${id}').close()`}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+)
+
 export const TranslatePage = ({
   lang,
   terms,
   selected,
   prevTermId,
   nextTermId,
+  feedback = OFF,
   url,
 }: TranslatePageProps) => {
   const meta = getLanguageMeta(lang)
   const dir = meta?.dir ?? "ltr"
+  const { mode, signinHref } = feedback
   const slots: Array<{
     context: ContextId
     value: string
@@ -237,18 +383,20 @@ export const TranslatePage = ({
     }
   }
 
+  const languageName = meta?.name ?? lang
+
   return (
     <Layout
       title={
         selected
-          ? `${selected.term.term} in ${meta?.name ?? lang} -- ETHGlossary`
-          : `Translate to ${meta?.name ?? lang} -- ETHGlossary`
+          ? `${selected.term.term} in ${languageName} -- ETHGlossary`
+          : `Translate to ${languageName} -- ETHGlossary`
       }
-      description={`Review and improve the ${meta?.name ?? lang} translation of Ethereum terminology.`}
+      description={`Review and improve the ${languageName} translation of Ethereum terminology.`}
       nav="translations"
       activeLang={lang}
       url={url}
-      island={TERM_FILTER_ISLAND}
+      island={TERM_FILTER_ISLAND + FEEDBACK_ISLAND}
     >
       {/*
         Two stages, not one.
@@ -282,63 +430,70 @@ export const TranslatePage = ({
 
           {/* Figma 21:854: a black wash, square corners, no border, 24px pad. */}
           <aside class="bg-sidebar p-6">
-          <h2 class="text-body font-bold text-foreground-strong">Terms</h2>
-          <div class="pt-3">
-            <input
-              type="search"
-              id="term-search"
-              class="w-full rounded-sm border border-input bg-transparent p-2 text-tiny/6 text-foreground placeholder:text-foreground-muted focus:border-accent"
-              placeholder="Search terms..."
-              autocomplete="off"
-              aria-label="Search terms"
-            />
-          </div>
-          <ul
-            id="term-list"
-            class="flex max-h-[min(60vh,32rem)] flex-col gap-1 overflow-y-auto pt-5 pb-6 lg:max-h-[calc(100vh-16rem)]"
-          >
-            {terms.map((t) => (
-              <li>
-                <a
-                  class={`flex items-center gap-2 px-3 py-2 text-body no-underline hover:bg-muted hover:text-foreground-strong hover:no-underline ${
-                    selected?.key === t.key
-                      ? "border-b border-foreground-strong bg-muted font-bold text-foreground-strong"
-                      : PROGRESS_TONE[t.progress].text
-                  }`}
-                  href={`/translations/${lang}/${t.id}`}
-                  aria-current={selected?.key === t.key ? "true" : undefined}
-                  data-term={t.term.toLowerCase()}
-                >
-                  <Icon
-                    svg={badgeCheck}
-                    class={`size-4 ${PROGRESS_TONE[t.progress].icon}`}
-                  />
-                  <span class="min-w-0 flex-1">{t.term}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-          <p class="border-t border-border-subtle pt-2.5 text-tiny text-foreground-subtle">
-            <span id="term-count">{terms.length}</span> terms
-          </p>
-          {/*
-            A term missing from the glossary is the other half of this page's
-            job, and there is nowhere else to report it. Gated like every
-            other control that needs an account.
-          */}
-          <button
-            type="button"
-            class="mt-4 w-full cursor-not-allowed rounded-full border border-accent px-4 py-2 text-label-md font-bold text-accent"
-            aria-disabled="true"
-            data-tip={COMING_SOON_TITLE}
-          >
-            Suggest new term
-          </button>
-        </aside>
+            <h2 class="text-body font-bold text-foreground-strong">Terms</h2>
+            <div class="pt-3">
+              <input
+                type="search"
+                id="term-search"
+                class="w-full rounded-sm border border-input bg-transparent p-2 text-tiny/6 text-foreground placeholder:text-foreground-muted focus:border-accent"
+                placeholder="Search terms..."
+                autocomplete="off"
+                aria-label="Search terms"
+              />
+            </div>
+            <ul
+              id="term-list"
+              class="flex max-h-[min(60vh,32rem)] flex-col gap-1 overflow-y-auto pt-5 pb-6 lg:max-h-[calc(100vh-16rem)]"
+            >
+              {terms.map((t) => (
+                <li>
+                  <a
+                    class={`flex items-center gap-2 px-3 py-2 text-body no-underline hover:bg-muted hover:text-foreground-strong hover:no-underline ${
+                      selected?.key === t.key
+                        ? "border-b border-foreground-strong bg-muted font-bold text-foreground-strong"
+                        : PROGRESS_TONE[t.progress].text
+                    }`}
+                    href={`/translations/${lang}/${t.id}`}
+                    aria-current={selected?.key === t.key ? "true" : undefined}
+                    data-term={t.term.toLowerCase()}
+                  >
+                    <Icon
+                      svg={badgeCheck}
+                      class={`size-4 ${PROGRESS_TONE[t.progress].icon}`}
+                    />
+                    <span class="min-w-0 flex-1">{t.term}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <p class="border-t border-border-subtle pt-2.5 text-tiny text-foreground-subtle">
+              <span id="term-count">{terms.length}</span> terms
+            </p>
+            {/*
+              A term missing from the glossary is the other half of this page's
+              job, and there is nowhere else to report it. Gated like every
+              other control that needs an account.
+            */}
+            <button
+              type="button"
+              class="mt-4 w-full rounded-full border border-accent px-4 py-2 text-label-md font-bold text-accent hover:bg-accent/10 aria-disabled:cursor-not-allowed"
+              data-open-dialog="new-term-dialog"
+              {...gate(mode, signinHref, "propose a term")}
+            >
+              Suggest new term
+            </button>
+          </aside>
         </div>
 
         {/* ---------- Column 2: detail ---------- */}
-        <div class="flex min-w-0 flex-col gap-10">
+        <div
+          class="flex min-w-0 flex-col gap-10"
+          data-feedback={mode}
+          data-lang={lang}
+          data-term-id={selected?.term.id ?? ""}
+          data-term-hash={feedback.termHash}
+          data-signin={signinHref}
+        >
           {!selected ? (
             <div class="flex flex-col gap-4">
               <p class={EYEBROW}>Get started</p>
@@ -380,6 +535,33 @@ export const TranslatePage = ({
                       More in style guide
                     </a>
                   </div>
+                  {/*
+                    The two structural flags. They are about the term, not a
+                    translation, so they sit with the definition rather than
+                    among the slot rows.
+                  */}
+                  <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-label-md text-foreground-subtle">
+                    <span class="inline-flex items-center gap-1.5">
+                      <Icon svg={flag} class="size-3.5" />
+                      Something off about this term?
+                    </span>
+                    <button
+                      type="button"
+                      class="text-accent hover:underline aria-disabled:cursor-not-allowed aria-disabled:no-underline"
+                      data-open-dialog="flag-redundant-dialog"
+                      {...gate(mode, signinHref, "flag a term")}
+                    >
+                      Redundant with another term
+                    </button>
+                    <button
+                      type="button"
+                      class="text-accent hover:underline aria-disabled:cursor-not-allowed aria-disabled:no-underline"
+                      data-open-dialog="flag-split-dialog"
+                      {...gate(mode, signinHref, "flag a term")}
+                    >
+                      Should be split in two
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
@@ -394,9 +576,11 @@ export const TranslatePage = ({
                   to help the community select the best translation for each context.
                 </p>
 
+                <p id="feedback-status" role="status" aria-live="polite" class="text-label-md text-foreground-muted" hidden></p>
+
                 {slots.length === 0 ? (
                   <p class="text-body text-foreground-muted">
-                    No {meta?.name ?? lang} translation is recorded for this term yet.
+                    No {languageName} translation is recorded for this term yet.
                   </p>
                 ) : (
                   <>
@@ -405,8 +589,7 @@ export const TranslatePage = ({
                         id="thumbs-up-all"
                         class="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-label-md font-bold text-accent hover:bg-accent/10 aria-disabled:cursor-not-allowed"
                         type="button"
-                        aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-                        data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
+                        {...gate(mode, signinHref, "vote")}
                       >
                         Thumbs up all
                         <Icon svg={thumbsUp} class="size-4" />
@@ -422,13 +605,16 @@ export const TranslatePage = ({
                           lang={lang}
                           dir={dir}
                           confidence={s.context === "prose" ? lowConfidence : undefined}
+                          slot={feedback.slots[s.context]}
+                          mode={mode}
+                          signinHref={signinHref}
                         />
                       ))}
                     </ul>
                   </>
                 )}
 
-                {ACCOUNTS_ENABLED ? null : (
+                {mode === "off" ? (
                   <p class="flex items-start gap-2 rounded-md bg-muted px-3 py-2.5 text-tiny text-foreground-subtle">
                     <Icon svg={circleAlert} class="mt-0.5 size-3.75 shrink-0" />
                     <span>
@@ -437,7 +623,7 @@ export const TranslatePage = ({
                       glossary data.
                     </span>
                   </p>
-                )}
+                ) : null}
 
                 {/*
                   Next is the action -- it is how a reviewer works through the
@@ -474,10 +660,30 @@ export const TranslatePage = ({
 
               <hr class="border-border-subtle" />
 
-              <div class="flex flex-col gap-2">
-                <p class="text-body text-foreground-muted">
-                  into <strong class="font-bold text-foreground-strong">{meta?.name ?? lang}</strong>
-                </p>
+              {/* ---------- Suggest a different translation ---------- */}
+              <form id="suggest-form" class="flex flex-col gap-2">
+                <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-body text-foreground-muted">
+                  <span>
+                    into <strong class="font-bold text-foreground-strong">{languageName}</strong>
+                  </span>
+                  {slots.length > 1 ? (
+                    <label class="inline-flex items-baseline gap-2">
+                      <span>for the</span>
+                      <select
+                        id="suggest-context"
+                        class="rounded-sm border border-input bg-transparent px-2 py-1 text-label-md text-foreground focus:border-accent"
+                        aria-label="Which context this suggestion is for"
+                      >
+                        {slots.map((s) => (
+                          <option value={s.context}>{CONTEXT_BY_ID[s.context].label}</option>
+                        ))}
+                      </select>
+                      <span>context</span>
+                    </label>
+                  ) : slots.length === 1 ? (
+                    <input type="hidden" id="suggest-context" value={slots[0].context} />
+                  ) : null}
+                </div>
                 <label class="sr-only" for="suggest-term">
                   Your suggested translation
                 </label>
@@ -485,9 +691,12 @@ export const TranslatePage = ({
                   id="suggest-term"
                   class="w-full border-0 border-b border-border bg-transparent px-0.5 py-2.5 font-serif text-h3 text-foreground-strong placeholder:text-foreground-subtle focus:border-accent aria-disabled:cursor-not-allowed"
                   placeholder="Suggest a different translation"
-                  aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-                  data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
-                  readonly={!ACCOUNTS_ENABLED}
+                  maxlength={200}
+                  autocomplete="off"
+                  lang={lang}
+                  dir={dir}
+                  readonly={mode !== "live"}
+                  {...gate(mode, signinHref, "suggest a translation")}
                 />
                 <label class="sr-only" for="suggest-reason">
                   Why is this better?
@@ -496,24 +705,69 @@ export const TranslatePage = ({
                   id="suggest-reason"
                   class="min-h-11 w-full resize-y border-0 border-b border-border bg-transparent px-0.5 py-2.5 text-body text-foreground placeholder:text-foreground-subtle focus:border-accent aria-disabled:cursor-not-allowed"
                   placeholder="Explain your reasoning (optional)"
-                  aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-                  data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
-                  readonly={!ACCOUNTS_ENABLED}
+                  maxlength={1000}
+                  readonly={mode !== "live"}
+                  {...gate(mode, signinHref, "suggest a translation")}
                 />
                 <button
-                  class="mt-3 inline-flex items-center gap-2 self-start rounded-full bg-primary px-5 py-3 text-body font-bold text-primary-foreground transition-[filter] hover:brightness-110 aria-disabled:cursor-not-allowed"
-                  type="button"
-                  aria-disabled={ACCOUNTS_ENABLED ? undefined : "true"}
-                  data-tip={ACCOUNTS_ENABLED ? undefined : COMING_SOON_TITLE}
+                  class="mt-3 inline-flex items-center gap-2 self-start rounded-full bg-primary px-5 py-3 text-body font-bold text-primary-foreground transition-[filter] hover:brightness-110 aria-busy:cursor-progress aria-busy:opacity-60 aria-disabled:cursor-not-allowed"
+                  type={mode === "live" ? "submit" : "button"}
+                  {...gate(mode, signinHref, "suggest a translation")}
                 >
                   Suggest translation
                 </button>
                 <p class="mt-2 flex items-start gap-2 rounded-md bg-muted px-3 py-2.5 text-tiny text-foreground-subtle">
                   <Icon svg={info} class="size-3.75 mt-0.5 shrink-0" />
-                  If your term matches an existing suggestion, we&rsquo;ll upvote that one
-                  for you instead of creating a duplicate.
+                  Suggestions go to the glossary maintainers, who review them alongside
+                  everyone else&rsquo;s. They are not shown to other visitors.
                 </p>
-              </div>
+              </form>
+
+              {/* ---------- Your open feedback on this term ---------- */}
+              {mode === "live" && (feedback.mySuggestions.length || feedback.myProposals.length) ? (
+                <div class="flex flex-col gap-3">
+                  <p class={EYEBROW}>Your open feedback</p>
+                  <ul class="flex flex-col gap-2">
+                    {feedback.mySuggestions.map((s) => (
+                      <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
+                        <span class="min-w-0">
+                          <span class="block text-tiny uppercase tracking-wider text-foreground-subtle">
+                            {CONTEXT_BY_ID[s.context]?.label ?? s.context}
+                            {feedback.slots[s.context]?.hash !== s.hash ? " · the translation has changed since" : ""}
+                          </span>
+                          <span class="font-serif text-label-xl text-foreground-strong" lang={lang} dir={dir}>
+                            {s.value}
+                          </span>
+                          {s.reason ? <span class="block text-label-md text-foreground-muted">{s.reason}</span> : null}
+                        </span>
+                        <button type="button" class={GHOST} data-withdraw="suggestions" data-id={s.id}>
+                          Withdraw
+                        </button>
+                      </li>
+                    ))}
+                    {feedback.myProposals.map((p) => (
+                      <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
+                        <span class="min-w-0">
+                          <span class="block text-tiny uppercase tracking-wider text-foreground-subtle">
+                            {p.kind === "new_term"
+                              ? "New term"
+                              : p.kind === "redundant"
+                                ? "Flagged as redundant"
+                                : p.kind === "split"
+                                  ? "Flagged for a split"
+                                  : `${p.kind} change`}
+                          </span>
+                          <span class="text-body text-foreground-strong">{describeProposal(p)}</span>
+                          {p.reason ? <span class="block text-label-md text-foreground-muted">{p.reason}</span> : null}
+                        </span>
+                        <button type="button" class={GHOST} data-withdraw="proposals" data-id={p.id}>
+                          Withdraw
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </>
           )}
         </div>
@@ -521,12 +775,116 @@ export const TranslatePage = ({
         {/* ---------- Versions: under the detail at lg, own rail at xl ---------- */}
         <aside class="flex flex-col gap-3 lg:col-start-2 xl:col-start-3 xl:row-start-1">
           <h2 class="border-b border-border pb-2.5 text-body font-bold text-foreground-strong">Versions</h2>
-          <p class="text-tiny/relaxed text-foreground-subtle">
-            Change history starts once the first build indexes the deployed glossary. Each
-            entry will record which context changed, and in which release.
-          </p>
+          {!feedback.historyAvailable ? (
+            <p class="text-tiny/relaxed text-foreground-subtle">
+              Change history starts once the first build indexes the deployed glossary. Each
+              entry will record which context changed, and in which release.
+            </p>
+          ) : !selected ? (
+            <p class="text-tiny/relaxed text-foreground-subtle">Pick a term to see what has changed about it.</p>
+          ) : feedback.history.length === 0 ? (
+            <p class="text-tiny/relaxed text-foreground-subtle">
+              No changes recorded for this term since history began.
+            </p>
+          ) : (
+            <ol class="flex flex-col gap-2.5">
+              {feedback.history.map((h) => (
+                <li class="flex flex-col gap-0.5 text-label-md">
+                  <span class="flex items-baseline gap-2">
+                    <time datetime={h.date} class="shrink-0 tabular-nums text-foreground-subtle">
+                      {h.date}
+                    </time>
+                    <span class="text-foreground">{describeChange(h)}</span>
+                  </span>
+                  {h.kind === "slot_changed" && h.old_value && h.new_value ? (
+                    <span class="pl-[5.5rem] text-tiny text-foreground-muted" lang={lang} dir={dir}>
+                      <s>{h.old_value}</s> {"→"} {h.new_value}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
         </aside>
       </div>
+
+      {/* ---------- Proposal dialogs, live mode only ---------- */}
+      {mode === "live" ? (
+        <>
+          <ProposalDialog
+            id="new-term-dialog"
+            formId="new-term-form"
+            title="Suggest a new term"
+            intro="A term you think belongs in the glossary. The maintainers review every proposal; if they add it, all 24 languages are drafted from it."
+            submit="Send proposal"
+          >
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              English term
+              <input name="term" class={FIELD} required maxlength={120} autocomplete="off" />
+            </label>
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              What it means (optional)
+              <textarea name="definition" class={`${FIELD} min-h-20`} maxlength={2000}></textarea>
+            </label>
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              How you would say it in {languageName} (optional)
+              <input name="translation" class={FIELD} maxlength={200} lang={lang} dir={dir} autocomplete="off" />
+            </label>
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              Where you came across it, or why it matters (optional)
+              <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
+            </label>
+          </ProposalDialog>
+
+          <ProposalDialog
+            id="flag-redundant-dialog"
+            formId="flag-redundant-form"
+            title={`Is “${selected?.term.term ?? ""}” redundant?`}
+            intro="Name the term or terms this one duplicates. The maintainers will look at merging them."
+            submit="Send flag"
+          >
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              Redundant with (one per line, or comma-separated)
+              <textarea name="with" class={`${FIELD} min-h-16`} required maxlength={1000} placeholder="e.g. smart contract"></textarea>
+            </label>
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              Why (optional)
+              <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
+            </label>
+          </ProposalDialog>
+
+          <ProposalDialog
+            id="flag-split-dialog"
+            formId="flag-split-form"
+            title={`Should “${selected?.term.term ?? ""}” be split?`}
+            intro="List the separate terms this entry should become, one per line."
+            submit="Send flag"
+          >
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              Split into
+              <textarea name="into" class={`${FIELD} min-h-20`} required maxlength={1000} placeholder={"gas (concept)\ngas limit"}></textarea>
+            </label>
+            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
+              Why (optional)
+              <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
+            </label>
+          </ProposalDialog>
+        </>
+      ) : null}
     </Layout>
   )
+}
+
+function describeProposal(p: Proposal): string {
+  const payload = p.payload as Record<string, unknown>
+  if (p.kind === "new_term") return String(payload.term ?? "")
+  if (p.kind === "redundant") {
+    const others = (payload.with as Array<{ term: string }> | undefined) ?? []
+    return `Duplicates ${others.map((o) => `“${o.term}”`).join(", ")}`
+  }
+  if (p.kind === "split") {
+    const into = (payload.into as Array<{ term: string }> | undefined) ?? []
+    return `Into ${into.map((o) => `“${o.term}”`).join(", ")}`
+  }
+  return JSON.stringify(payload)
 }
