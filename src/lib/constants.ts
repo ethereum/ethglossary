@@ -51,7 +51,7 @@ export const LANG_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
  * there is something a signed-in person can do. Flip this in the PR that
  * ships votes and suggestions, and the whole surface appears at once.
  */
-export const ACCOUNTS_ENABLED = false
+export const ACCOUNTS_ENABLED = true
 
 /**
  * Tooltip for the controls ACCOUNTS_ENABLED gates.
