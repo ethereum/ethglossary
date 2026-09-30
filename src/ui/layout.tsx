@@ -186,7 +186,7 @@ function accountsAvailable(): boolean {
 export const SignInControl = ({ block, path }: { block?: boolean; path?: string } = {}) => {
   const user = currentUser()
   const pill = `whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
-    block ? "w-full text-center" : ""
+    block ? "w-full" : ""
   }`
 
   if (!ACCOUNTS_ENABLED) {
@@ -226,7 +226,10 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
 
   const next = path && path !== "/signin" ? `?next=${encodeURIComponent(path)}` : ""
   return (
-    <a class={`inline-block ${pill} no-underline transition-[filter] hover:brightness-110 hover:no-underline`} href={`/signin${next}`}>
+    <a
+      class={`inline-block text-center ${pill} no-underline transition-[filter] hover:brightness-110 hover:no-underline`}
+      href={`/signin${next}`}
+    >
       Sign in
     </a>
   )
