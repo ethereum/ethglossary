@@ -79,6 +79,27 @@ async function locate(lang: string, termId: string) {
   return entry ? { term, key, entry } : null
 }
 
+/**
+ * A plurals suggestion arrives as `category=form` pairs joined by `|` and is
+ * stored in slotValue()'s exact shape -- sorted by category -- so it compares
+ * with what is live. Null when a pair is malformed, names a category this
+ * entry does not mark, or repeats one.
+ */
+function canonicalPlurals(value: string, plurals: Record<string, string | null>): string | null {
+  const allowed = new Set(Object.entries(plurals).filter(([, v]) => v).map(([k]) => k))
+  const pairs = new Map<string, string>()
+  for (const pair of value.split("|")) {
+    const i = pair.indexOf("=")
+    if (i <= 0) return null
+    const k = pair.slice(0, i).trim()
+    const v = store.normalizeValue(pair.slice(i + 1))
+    if (!allowed.has(k) || pairs.has(k) || !v || v.length > 100) return null
+    pairs.set(k, v)
+  }
+  if (!pairs.size) return null
+  return [...pairs].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join("|")
+}
+
 const security = [{ cookieAuth: [] }]
 const errors = {
   401: { content: { "application/json": { schema: FeedbackErrorSchema } }, description: "Not signed in" },
@@ -175,7 +196,15 @@ app.openapi(suggestRoute, async (c) => {
   const current = slotHash(found.entry, body.context)
   if (current !== body.hash) return c.json({ error: "stale", context: body.context, current: current ?? undefined }, 409)
   const currentValue = slotValue(found.entry, body.context) as string
-  if (store.normalizeValue(body.value) === store.normalizeValue(currentValue)) {
+  let value = body.value
+  if (body.context === "plurals") {
+    const canonical = canonicalPlurals(value, found.entry.plurals ?? {})
+    if (!canonical) {
+      return c.json({ error: "plural forms must be category=form pairs for this language's categories, joined by |" }, 400)
+    }
+    value = canonical
+  }
+  if (store.normalizeValue(value) === store.normalizeValue(currentValue)) {
     return c.json({ error: "that is already the current translation" }, 400)
   }
   if (!allow("feedback-suggestions", userId(c), LIMITS.suggestions, HOUR)) {
@@ -184,7 +213,7 @@ app.openapi(suggestRoute, async (c) => {
 
   const db = sql()
   const version = await store.slotVersionId(db, found.term.uid, lang, body.context, body.hash, currentValue)
-  const result = await store.addSuggestion(db, userId(c), version, body.value, body.reason?.trim() || null)
+  const result = await store.addSuggestion(db, userId(c), version, value, body.reason?.trim() || null)
   return c.json(result, 201)
 })
 
@@ -203,7 +232,7 @@ const deleteSuggestionRoute = createRoute({
 })
 
 app.openapi(deleteSuggestionRoute, async (c) => {
-  const removed = await store.removeSuggestion(sql(), userId(c), c.req.valid("param").id)
+  const removed = await store.withdrawSuggestion(sql(), userId(c), c.req.valid("param").id)
   return removed ? c.body(null, 204) : c.json({ error: "no such open suggestion of yours" }, 404)
 })
 
@@ -276,7 +305,7 @@ const deleteProposalRoute = createRoute({
 })
 
 app.openapi(deleteProposalRoute, async (c) => {
-  const removed = await store.removeProposal(sql(), userId(c), c.req.valid("param").id)
+  const removed = await store.withdrawProposal(sql(), userId(c), c.req.valid("param").id)
   return removed ? c.body(null, 204) : c.json({ error: "no such open proposal of yours" }, 404)
 })
 

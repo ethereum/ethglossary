@@ -353,6 +353,7 @@ async function feedbackState(
     mySuggestions: [],
     myProposals: [],
     history: [],
+    historySince: null,
     historyAvailable: false,
   }
   const sql = getDb()
@@ -361,6 +362,7 @@ async function feedbackState(
   try {
     state.historyAvailable = true
     state.history = await feedback.history(sql, term.uid, lang)
+    state.historySince = await feedback.historySince(sql)
     if (mode === "off" || !entry) return state
 
     const tallies = await feedback.tallies(sql, term.uid, lang)
@@ -378,7 +380,7 @@ async function feedbackState(
     }
     if (user) {
       state.mySuggestions = await feedback.mySuggestions(sql, user.id, term.uid, lang)
-      state.myProposals = await feedback.myProposals(sql, user.id, term.uid, lang)
+      state.myProposals = await feedback.myProposals(sql, user.id, term.uid)
     }
   } catch (err) {
     console.error("feedback read failed:", err instanceof Error ? err.message : err)

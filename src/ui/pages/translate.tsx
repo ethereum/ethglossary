@@ -27,6 +27,8 @@ import { raw } from "hono/html"
 import { Layout } from "../layout"
 import type { PageUrl } from "../layout"
 import { Icon } from "../icon"
+import { describeProposal, pluralValueLabel, proposalKindLabel } from "../feedback-labels"
+import { DIALOG, WithdrawDialog, WITHDRAW_ISLAND } from "../withdraw"
 import arrowLeft from "lucide-static/icons/arrow-left.svg"
 import arrowRight from "lucide-static/icons/arrow-right.svg"
 import badgeCheck from "lucide-static/icons/badge-check.svg"
@@ -76,6 +78,8 @@ export interface FeedbackState {
   myProposals: Proposal[]
   /** Newest first. Empty when nothing has changed since history began. */
   history: HistoryEntry[]
+  /** The day history began, shown as the baseline under the entries. Null before the first index. */
+  historySince: string | null
   /** False when there is no database to read history from. */
   historyAvailable: boolean
 }
@@ -118,7 +122,7 @@ const PROGRESS_TONE: Record<ProgressState, { icon: string; text: string }> = {
 function gate(mode: FeedbackMode, signinHref: string, verb: string): Record<string, string> {
   if (mode === "live") return {}
   if (mode === "signin") {
-    return { "data-tip": `Sign in to ${verb}`, "data-tip-href": signinHref, "data-tip-link": "Sign in" }
+    return { "data-tip": `Sign in to ${verb}`, "data-tip-href": signinHref }
   }
   return { "aria-disabled": "true", "data-tip": COMING_SOON_TITLE }
 }
@@ -131,6 +135,7 @@ const OFF: FeedbackState = {
   mySuggestions: [],
   myProposals: [],
   history: [],
+  historySince: null,
   historyAvailable: false,
 }
 
@@ -142,6 +147,7 @@ const SlotRow = ({
   dir,
   confidence,
   slot,
+  suggested,
   mode,
   signinHref,
 }: {
@@ -153,6 +159,8 @@ const SlotRow = ({
   /** Set only where it is worth flagging -- see `lowConfidence` below. */
   confidence?: "medium" | "low"
   slot?: SlotFeedback
+  /** Whether the reader has an open suggestion on this slot; counts as covered like a vote does. */
+  suggested?: boolean
   mode: FeedbackMode
   signinHref: string
 }) => {
@@ -160,7 +168,9 @@ const SlotRow = ({
   const counts = mode === "off" || !slot
   const voteButton = (direction: "up" | "down", svg: string, label: string) => (
     <button
-      class="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-label-lg tabular-nums text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-pressed:text-teal aria-disabled:cursor-not-allowed"
+      class={`inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-label-lg tabular-nums text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-disabled:cursor-not-allowed ${
+        direction === "up" ? "aria-pressed:text-teal" : "aria-pressed:text-rose"
+      }`}
       type="button"
       aria-pressed={slot?.mine === direction ? "true" : "false"}
       aria-label={`${label} the ${meta.label} translation`}
@@ -178,6 +188,7 @@ const SlotRow = ({
       class="overflow-hidden rounded-card border border-border bg-card"
       data-slot={context}
       data-hash={slot?.hash ?? ""}
+      data-suggested={suggested ? "true" : undefined}
     >
       <div class="flex items-center justify-between gap-4 px-4 py-3">
         {plurals ? (
@@ -258,6 +269,21 @@ const SlotRow = ({
   )
 }
 
+/**
+ * The rail reads as versions, newest first: one block per deploy that
+ * changed the term, numbered down to v1, which is the day the indexer first
+ * recorded the glossary. Entries come in by day, so a day is a version.
+ */
+function groupVersions(history: HistoryEntry[]): Array<{ date: string; changes: HistoryEntry[] }> {
+  const out: Array<{ date: string; changes: HistoryEntry[] }> = []
+  for (const h of history) {
+    const last = out[out.length - 1]
+    if (last && last.date === h.date) last.changes.push(h)
+    else out.push({ date: h.date, changes: [h] })
+  }
+  return out
+}
+
 /** One line of the Versions rail. */
 function describeChange(h: HistoryEntry): string {
   const label = h.context ? CONTEXT_BY_ID[h.context as ContextId]?.label ?? h.context : ""
@@ -281,10 +307,8 @@ function describeChange(h: HistoryEntry): string {
   }
 }
 
-const DIALOG =
-  "m-auto w-[min(32rem,calc(100vw-2rem))] rounded-card border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm"
 const FIELD =
-  "w-full rounded-sm border border-input bg-transparent px-3 py-2 text-body text-foreground placeholder:text-foreground-muted focus:border-accent"
+  "w-full rounded-sm border border-input bg-transparent px-3 py-2 text-body text-foreground placeholder:text-foreground-subtle focus:border-accent"
 const PRIMARY =
   "inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-label-md font-bold text-primary-foreground transition-[filter] hover:brightness-110 aria-busy:cursor-progress aria-busy:opacity-60"
 const GHOST = "rounded-full px-4 py-2 text-label-md text-foreground-subtle hover:text-foreground-strong"
@@ -384,6 +408,8 @@ export const TranslatePage = ({
   }
 
   const languageName = meta?.name ?? lang
+  /** The plural forms of the selected term in this language, in file order, for the suggestion fields. */
+  const pluralForms: Array<[string, string]> = slots.find((s) => s.context === "plurals")?.plurals ?? []
 
   return (
     <Layout
@@ -396,7 +422,7 @@ export const TranslatePage = ({
       nav="translations"
       activeLang={lang}
       url={url}
-      island={TERM_FILTER_ISLAND + FEEDBACK_ISLAND}
+      island={TERM_FILTER_ISLAND + FEEDBACK_ISLAND + WITHDRAW_ISLAND}
     >
       {/*
         Two stages, not one.
@@ -409,7 +435,14 @@ export const TranslatePage = ({
       */}
       <div class="grid items-start gap-12 pt-8 pb-16 lg:grid-cols-[278px_minmax(0,1fr)] xl:grid-cols-[278px_minmax(0,1fr)_278px]">
         {/* ---------- Column 1: language, then term list ---------- */}
-        <div class="flex flex-col gap-4">
+        {/*
+          At lg the column sticks and is capped to the viewport less 1rem each
+          side, and the list flexes to whatever is left, so it is as tall as
+          the screen allows however many terms the language has. At the very
+          top of the page the nav pushes the column's last few rem below the
+          fold; one scroll and it sits exactly in view.
+        */}
+        <div class="flex flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)]">
           {/*
             Which language you are reviewing, and how to leave it. Without this
             the page gives no sign of the choice the cookie is making on your
@@ -429,7 +462,7 @@ export const TranslatePage = ({
           </div>
 
           {/* Figma 21:854: a black wash, square corners, no border, 24px pad. */}
-          <aside class="bg-sidebar p-6">
+          <aside class="bg-sidebar p-6 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
             <h2 class="text-body font-bold text-foreground-strong">Terms</h2>
             <div class="pt-3">
               <input
@@ -443,7 +476,7 @@ export const TranslatePage = ({
             </div>
             <ul
               id="term-list"
-              class="flex max-h-[min(60vh,32rem)] flex-col gap-1 overflow-y-auto pt-5 pb-6 lg:max-h-[calc(100vh-16rem)]"
+              class="flex max-h-[min(60vh,32rem)] flex-col gap-1 overflow-y-auto pt-5 pb-6 lg:min-h-0 lg:max-h-none lg:flex-1"
             >
               {terms.map((t) => (
                 <li>
@@ -606,6 +639,7 @@ export const TranslatePage = ({
                           dir={dir}
                           confidence={s.context === "prose" ? lowConfidence : undefined}
                           slot={feedback.slots[s.context]}
+                          suggested={feedback.mySuggestions.some((m) => m.context === s.context)}
                           mode={mode}
                           signinHref={signinHref}
                         />
@@ -649,9 +683,10 @@ export const TranslatePage = ({
                       <a
                         class="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-label-md font-bold text-primary-foreground no-underline transition-[filter] hover:brightness-110 hover:no-underline"
                         href={`/translations/${lang}/${nextTermId}`}
+                        id="next-term"
                       >
                         Next term
-                        <Icon svg={arrowRight} class="size-4" />
+                        <Icon svg={arrowRight} class="size-4 arrow-nudge" />
                       </a>
                     ) : null}
                   </div>
@@ -662,13 +697,11 @@ export const TranslatePage = ({
 
               {/* ---------- Suggest a different translation ---------- */}
               <form id="suggest-form" class="flex flex-col gap-2">
-                <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-body text-foreground-muted">
-                  <span>
-                    into <strong class="font-bold text-foreground-strong">{languageName}</strong>
-                  </span>
+                <p class="text-body text-foreground-muted">
+                  Into <strong class="font-bold text-foreground-strong">{languageName}</strong>
                   {slots.length > 1 ? (
-                    <label class="inline-flex items-baseline gap-2">
-                      <span>for the</span>
+                    <>
+                      {", for the "}
                       <select
                         id="suggest-context"
                         class="rounded-sm border border-input bg-transparent px-2 py-1 text-label-md text-foreground focus:border-accent"
@@ -678,12 +711,12 @@ export const TranslatePage = ({
                           <option value={s.context}>{CONTEXT_BY_ID[s.context].label}</option>
                         ))}
                       </select>
-                      <span>context</span>
-                    </label>
+                      {" context"}
+                    </>
                   ) : slots.length === 1 ? (
                     <input type="hidden" id="suggest-context" value={slots[0].context} />
                   ) : null}
-                </div>
+                </p>
                 <label class="sr-only" for="suggest-term">
                   Your suggested translation
                 </label>
@@ -698,6 +731,36 @@ export const TranslatePage = ({
                   readonly={mode !== "live"}
                   {...gate(mode, signinHref, "suggest a translation")}
                 />
+                {/*
+                  Plurals are several forms, not one string: one field per CLDR
+                  category the language marks for this term. Shown by the island
+                  in place of the single field when the plurals context is
+                  chosen; the island joins them the way slotValue() does.
+                */}
+                {pluralForms.length ? (
+                  <div id="suggest-plurals" class="flex flex-col gap-2 pt-1" hidden>
+                    {pluralForms.map(([form, current]) => (
+                      <label class="flex items-baseline gap-3">
+                        <span class="w-12 shrink-0 font-sans text-tiny uppercase tracking-wider text-foreground-subtle">
+                          {form}
+                        </span>
+                        <input
+                          class="min-w-0 flex-1 border-0 border-b border-border bg-transparent px-0.5 py-2 font-serif text-label-xl text-foreground-strong placeholder:text-foreground-subtle focus:border-accent"
+                          data-plural-form={form}
+                          placeholder={current}
+                          maxlength={100}
+                          autocomplete="off"
+                          lang={lang}
+                          dir={dir}
+                          readonly={mode !== "live"}
+                        />
+                      </label>
+                    ))}
+                    <p class="text-tiny text-foreground-subtle">
+                      Leave a form empty to keep the current one.
+                    </p>
+                  </div>
+                ) : null}
                 <label class="sr-only" for="suggest-reason">
                   Why is this better?
                 </label>
@@ -719,14 +782,14 @@ export const TranslatePage = ({
                 <p class="mt-2 flex items-start gap-2 rounded-md bg-muted px-3 py-2.5 text-tiny text-foreground-subtle">
                   <Icon svg={info} class="size-3.75 mt-0.5 shrink-0" />
                   Suggestions go to the glossary maintainers, who review them alongside
-                  everyone else&rsquo;s. They are not shown to other visitors.
+                  everyone else&rsquo;s. They are not shown to other visitors until approved.
                 </p>
               </form>
 
               {/* ---------- Your open feedback on this term ---------- */}
               {mode === "live" && (feedback.mySuggestions.length || feedback.myProposals.length) ? (
                 <div class="flex flex-col gap-3">
-                  <p class={EYEBROW}>Your open feedback</p>
+                  <p class={EYEBROW}>Your open feedback on this term</p>
                   <ul class="flex flex-col gap-2">
                     {feedback.mySuggestions.map((s) => (
                       <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
@@ -736,7 +799,7 @@ export const TranslatePage = ({
                             {feedback.slots[s.context]?.hash !== s.hash ? " · the translation has changed since" : ""}
                           </span>
                           <span class="font-serif text-label-xl text-foreground-strong" lang={lang} dir={dir}>
-                            {s.value}
+                            {s.context === "plurals" ? pluralValueLabel(s.value) : s.value}
                           </span>
                           {s.reason ? <span class="block text-label-md text-foreground-muted">{s.reason}</span> : null}
                         </span>
@@ -749,13 +812,7 @@ export const TranslatePage = ({
                       <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
                         <span class="min-w-0">
                           <span class="block text-tiny uppercase tracking-wider text-foreground-subtle">
-                            {p.kind === "new_term"
-                              ? "New term"
-                              : p.kind === "redundant"
-                                ? "Flagged as redundant"
-                                : p.kind === "split"
-                                  ? "Flagged for a split"
-                                  : `${p.kind} change`}
+                            {proposalKindLabel(p.kind)}
                           </span>
                           <span class="text-body text-foreground-strong">{describeProposal(p)}</span>
                           {p.reason ? <span class="block text-label-md text-foreground-muted">{p.reason}</span> : null}
@@ -766,6 +823,9 @@ export const TranslatePage = ({
                       </li>
                     ))}
                   </ul>
+                  <a class="self-start text-label-md text-accent" href="/account">
+                    Everything you have suggested, on your account page
+                  </a>
                 </div>
               ) : null}
             </>
@@ -782,27 +842,41 @@ export const TranslatePage = ({
             </p>
           ) : !selected ? (
             <p class="text-tiny/relaxed text-foreground-subtle">Pick a term to see what has changed about it.</p>
-          ) : feedback.history.length === 0 ? (
-            <p class="text-tiny/relaxed text-foreground-subtle">
-              No changes recorded for this term since history began.
-            </p>
           ) : (
-            <ol class="flex flex-col gap-2.5">
-              {feedback.history.map((h) => (
-                <li class="flex flex-col gap-0.5 text-label-md">
-                  <span class="flex items-baseline gap-2">
-                    <time datetime={h.date} class="shrink-0 tabular-nums text-foreground-subtle">
-                      {h.date}
+            <ol class="flex flex-col gap-3">
+              {groupVersions(feedback.history).map((v, i, all) => (
+                <li class="flex flex-col gap-1">
+                  <span class="flex items-baseline gap-2 text-label-md">
+                    <span class="w-7 shrink-0 font-mono text-foreground-subtle">v{all.length + 1 - i}</span>
+                    <time datetime={v.date} class="tabular-nums text-foreground-strong">
+                      {v.date}
                     </time>
-                    <span class="text-foreground">{describeChange(h)}</span>
                   </span>
-                  {h.kind === "slot_changed" && h.old_value && h.new_value ? (
-                    <span class="pl-[5.5rem] text-tiny text-foreground-muted" lang={lang} dir={dir}>
-                      <s>{h.old_value}</s> {"→"} {h.new_value}
-                    </span>
-                  ) : null}
+                  <ul class="flex flex-col gap-1 ps-9">
+                    {v.changes.map((h) => (
+                      <li class="flex flex-col gap-0.5 text-label-md">
+                        <span class="text-foreground">{describeChange(h)}</span>
+                        {h.kind === "slot_changed" && h.old_value && h.new_value ? (
+                          <span class="text-tiny text-foreground-muted" lang={lang} dir={dir}>
+                            <s>{h.old_value}</s> {"→"} {h.new_value}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
+              {feedback.historySince ? (
+                <li class="flex items-baseline gap-2 text-label-md">
+                  <span class="w-7 shrink-0 font-mono text-foreground-subtle">v1</span>
+                  <time datetime={feedback.historySince} class="tabular-nums text-foreground-strong">
+                    {feedback.historySince}
+                  </time>
+                  <span class="text-foreground-subtle">First recorded</span>
+                </li>
+              ) : (
+                <li class="text-label-md text-foreground-subtle">Nothing recorded yet.</li>
+              )}
             </ol>
           )}
         </aside>
@@ -869,22 +943,11 @@ export const TranslatePage = ({
               <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
             </label>
           </ProposalDialog>
+
+          <WithdrawDialog signinHref={feedback.signinHref} />
         </>
       ) : null}
     </Layout>
   )
 }
 
-function describeProposal(p: Proposal): string {
-  const payload = p.payload as Record<string, unknown>
-  if (p.kind === "new_term") return String(payload.term ?? "")
-  if (p.kind === "redundant") {
-    const others = (payload.with as Array<{ term: string }> | undefined) ?? []
-    return `Duplicates ${others.map((o) => `“${o.term}”`).join(", ")}`
-  }
-  if (p.kind === "split") {
-    const into = (payload.into as Array<{ term: string }> | undefined) ?? []
-    return `Into ${into.map((o) => `“${o.term}”`).join(", ")}`
-  }
-  return JSON.stringify(payload)
-}

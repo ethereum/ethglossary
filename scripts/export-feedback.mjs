@@ -2,7 +2,7 @@
 /**
  * Export community feedback as JSON Lines for maintainer review.
  *
- *   DATABASE_URL=postgres://... node scripts/export-feedback.mjs [--since ISO] [--status open|accepted|declined|all] > feedback.jsonl
+ *   DATABASE_URL=postgres://... node scripts/export-feedback.mjs [--since ISO] [--status open|accepted|declined|withdrawn|all] > feedback.jsonl
  *
  * One line per record. `type` is one of:
  *   suggestion  -- one distinct suggested value for one slot, with how many

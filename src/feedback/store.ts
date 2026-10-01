@@ -131,7 +131,8 @@ export interface Suggestion {
 /**
  * Record "this slot should read X". The unique index on (user, slot
  * version, normalized value) makes a second identical suggestion from the
- * same person a no-op that reports `duplicate`.
+ * same person a no-op that reports `duplicate` -- unless they had withdrawn
+ * it, in which case the same row reopens as if new.
  */
 export async function addSuggestion(
   sql: Sql,
@@ -147,10 +148,15 @@ export async function addSuggestion(
     ON CONFLICT (user_id, slot_version_id, normalized_value) DO NOTHING
     RETURNING id`
   if (inserted[0]) return { id: inserted[0].id, duplicate: false }
-  const existing = await sql<{ id: string }[]>`
-    SELECT id FROM suggestions
+  const [existing] = await sql<{ id: string; status: string }[]>`
+    SELECT id, status FROM suggestions
     WHERE user_id = ${userId} AND slot_version_id = ${slotVersion} AND normalized_value = ${normalized}`
-  return { id: existing[0].id, duplicate: true }
+  if (existing.status !== "withdrawn") return { id: existing.id, duplicate: true }
+  await sql`
+    UPDATE suggestions
+    SET status = 'open', reason = ${reason}, created_at = now(), resolved_at = NULL, resolution_note = NULL
+    WHERE id = ${existing.id}`
+  return { id: existing.id, duplicate: false }
 }
 
 /** The caller's own open suggestions on one term in one language. Nobody else's, ever. */
@@ -163,9 +169,14 @@ export async function mySuggestions(sql: Sql, userId: string, uid: string, lang:
     ORDER BY s.created_at`
 }
 
-/** Withdraw one of your own open suggestions. False when there was nothing to remove. */
-export async function removeSuggestion(sql: Sql, userId: string, id: string): Promise<boolean> {
-  const rows = await sql`DELETE FROM suggestions WHERE id = ${id} AND user_id = ${userId} AND status = 'open' RETURNING id`
+/**
+ * Withdraw one of your own open suggestions. The row stays, marked, so the
+ * author can see it and re-suggesting reopens it. False when nothing was open.
+ */
+export async function withdrawSuggestion(sql: Sql, userId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE suggestions SET status = 'withdrawn', resolved_at = now()
+    WHERE id = ${id} AND user_id = ${userId} AND status = 'open' RETURNING id`
   return rows.length > 0
 }
 
@@ -209,19 +220,77 @@ export async function addProposal(
   return id
 }
 
-/** The caller's own open proposals about one term (flags, metadata), plus their new-term proposals for the language. */
-export async function myProposals(sql: Sql, userId: string, uid: string, lang: string): Promise<Proposal[]> {
+/**
+ * The caller's own open proposals about one term: flags and metadata. A
+ * new-term proposal is about no existing term, so it is listed on the
+ * account page instead.
+ */
+export async function myProposals(sql: Sql, userId: string, uid: string): Promise<Proposal[]> {
   return sql<Proposal[]>`
     SELECT id, kind, term_uid, lang, payload, reason, created_at
     FROM proposals
-    WHERE user_id = ${userId} AND status = 'open'
-      AND (term_uid = ${uid} OR (kind = 'new_term' AND lang = ${lang}))
+    WHERE user_id = ${userId} AND status = 'open' AND term_uid = ${uid}
     ORDER BY created_at`
 }
 
-export async function removeProposal(sql: Sql, userId: string, id: string): Promise<boolean> {
-  const rows = await sql`DELETE FROM proposals WHERE id = ${id} AND user_id = ${userId} AND status = 'open' RETURNING id`
+export async function withdrawProposal(sql: Sql, userId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE proposals SET status = 'withdrawn', resolved_at = now()
+    WHERE id = ${id} AND user_id = ${userId} AND status = 'open' RETURNING id`
   return rows.length > 0
+}
+
+// ------------------------------------------------- the account page's view
+
+export type FeedbackStatus = "open" | "accepted" | "declined" | "withdrawn"
+
+export interface OwnSuggestion extends Suggestion {
+  lang: string
+  term_uid: string
+  status: FeedbackStatus
+  resolved_at: Date | null
+  resolution_note: string | null
+}
+
+/** Everything the caller has suggested, in every language and every status, newest first. */
+export async function allMySuggestions(sql: Sql, userId: string): Promise<OwnSuggestion[]> {
+  return sql<OwnSuggestion[]>`
+    SELECT s.id, sv.lang, sv.term_uid, sv.context, sv.value_hash AS hash, s.value, s.reason,
+           s.status, s.created_at, s.resolved_at, s.resolution_note
+    FROM suggestions s
+    JOIN slot_versions sv ON sv.id = s.slot_version_id
+    WHERE s.user_id = ${userId}
+    ORDER BY s.created_at DESC`
+}
+
+export interface OwnProposal extends Proposal {
+  status: FeedbackStatus
+  resolved_at: Date | null
+  resolution_note: string | null
+}
+
+export async function allMyProposals(sql: Sql, userId: string): Promise<OwnProposal[]> {
+  return sql<OwnProposal[]>`
+    SELECT id, kind, term_uid, lang, payload, reason, status, created_at, resolved_at, resolution_note
+    FROM proposals
+    WHERE user_id = ${userId}
+    ORDER BY created_at DESC`
+}
+
+/** coveredSlots() for every language at once: lang -> `uid:context:hash`. */
+export async function coverageByLanguage(sql: Sql, userId: string): Promise<Map<string, Set<string>>> {
+  const rows = await sql<{ lang: string; term_uid: string; context: string; value_hash: string }[]>`
+    SELECT DISTINCT sv.lang, sv.term_uid, sv.context, sv.value_hash
+    FROM slot_versions sv
+    WHERE EXISTS (SELECT 1 FROM votes v WHERE v.slot_version_id = sv.id AND v.user_id = ${userId})
+       OR EXISTS (SELECT 1 FROM suggestions s WHERE s.slot_version_id = sv.id AND s.user_id = ${userId} AND s.status = 'open')`
+  const out = new Map<string, Set<string>>()
+  for (const r of rows) {
+    let set = out.get(r.lang)
+    if (!set) out.set(r.lang, (set = new Set()))
+    set.add(`${r.term_uid}:${r.context}:${r.value_hash}`)
+  }
+  return out
 }
 
 // -------------------------------------------------------------- history
@@ -240,6 +309,12 @@ export interface HistoryEntry {
  * newest first. This is what the Versions rail renders; it comes from the
  * startup indexer and nothing else writes it.
  */
+/** The day the indexer first recorded the glossary: the baseline every history starts from. Null before the first run. */
+export async function historySince(sql: Sql): Promise<string | null> {
+  const [row] = await sql<{ since: Date | null }[]>`SELECT min(deployed_at) AS since FROM glossary_snapshots`
+  return row?.since ? row.since.toISOString().slice(0, 10) : null
+}
+
 export async function history(sql: Sql, uid: string, lang: string, limit = 50): Promise<HistoryEntry[]> {
   const rows = await sql<{ date: Date; kind: string; context: string | null; old_value: string | null; new_value: string | null }[]>`
     SELECT gs.deployed_at AS date, tc.kind, tc.context, tc.old_value, tc.new_value

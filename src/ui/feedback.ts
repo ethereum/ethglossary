@@ -62,9 +62,22 @@ export const FEEDBACK_ISLAND = `
     down.setAttribute("aria-pressed", t.mine === "down" ? "true" : "false");
   }
 
+  // The mark beside this term in the list. Green the moment any slot is
+  // covered, so the reader sees the term counted without leaving it.
+  var mark = document.querySelector('#term-list a[aria-current="true"] .icon');
+  function repaintProgress() {
+    if (!mark) return;
+    var covered = rows().filter(function (r) {
+      return r.querySelector('[data-vote][aria-pressed="true"]') || r.getAttribute("data-suggested") === "true";
+    }).length;
+    mark.classList.toggle("text-teal", covered > 0);
+    mark.classList.toggle("text-foreground-subtle", covered === 0);
+  }
+
   async function vote(items) {
     var json = await call("PUT", base + "/votes", { votes: items });
     (json.tallies || []).forEach(paint);
+    repaintProgress();
   }
 
   root.addEventListener("click", function (e) {
@@ -81,7 +94,17 @@ export const FEEDBACK_ISLAND = `
   if (all) all.addEventListener("click", function () {
     var items = rows().map(function (r) { return { context: r.getAttribute("data-slot"), hash: r.getAttribute("data-hash"), direction: "up" }; });
     if (!items.length) return;
-    vote(items).then(function () { say("Thanks. Every context is marked as good.", "ok"); })
+    vote(items).then(function () {
+      say("Thanks. Every context is marked as good.", "ok");
+      // The natural next step is the next term: focus it so Enter goes there,
+      // with a visible ring, which a click-initiated focus() would not draw.
+      var next = document.getElementById("next-term");
+      if (next) {
+        next.setAttribute("data-focus-ring", "");
+        next.addEventListener("blur", function () { next.removeAttribute("data-focus-ring"); }, { once: true });
+        next.focus();
+      }
+    })
       .catch(function (err) { if (err.message !== "stale" && err.message !== "signed out") say(err.message, "error"); });
   });
 
@@ -89,20 +112,42 @@ export const FEEDBACK_ISLAND = `
 
   var form = document.getElementById("suggest-form");
   var ctxSelect = document.getElementById("suggest-context");
+  var single = document.getElementById("suggest-term");
+  var plurals = document.getElementById("suggest-plurals");
+
+  // The plurals context is several forms, not one string: swap the fields.
+  function syncFields() {
+    var isPlurals = ctxSelect && ctxSelect.value === "plurals" && plurals;
+    if (single) single.hidden = !!isPlurals;
+    if (plurals) plurals.hidden = !isPlurals;
+  }
+  if (ctxSelect) { ctxSelect.addEventListener("change", syncFields); syncFields(); }
+
+  // What the server hashes for plurals: sorted key=value pairs joined by |,
+  // an empty field meaning "keep the current form".
+  function pluralValue() {
+    var inputs = Array.prototype.slice.call(plurals.querySelectorAll("[data-plural-form]"));
+    return inputs.map(function (i) {
+      var v = i.value.trim() || i.getAttribute("placeholder") || "";
+      return { k: i.getAttribute("data-plural-form"), v: v };
+    }).filter(function (p) { return p.v; })
+      .sort(function (a, b) { return a.k < b.k ? -1 : a.k > b.k ? 1 : 0; })
+      .map(function (p) { return p.k + "=" + p.v; }).join("|");
+  }
   root.addEventListener("click", function (e) {
     var pencil = e.target.closest('[data-action="suggest"]');
     if (!pencil || !root.contains(pencil)) return;
     var ctx = pencil.closest("[data-slot]").getAttribute("data-slot");
-    if (ctxSelect) ctxSelect.value = ctx;
-    var input = document.getElementById("suggest-term");
-    if (input) { input.focus(); input.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    if (ctxSelect) { ctxSelect.value = ctx; syncFields(); }
+    var target = ctx === "plurals" && plurals ? plurals.querySelector("input") : single;
+    if (target) { target.focus(); target.scrollIntoView({ block: "center", behavior: "smooth" }); }
   });
 
   if (form) form.addEventListener("submit", function (e) {
     e.preventDefault();
     var ctx = ctxSelect ? ctxSelect.value : "prose";
     var row = root.querySelector('[data-slot="' + ctx + '"]');
-    var value = document.getElementById("suggest-term").value.trim();
+    var value = ctx === "plurals" && plurals ? pluralValue() : single.value.trim();
     var reason = (document.getElementById("suggest-reason").value || "").trim();
     if (!value || !row) return;
     var btn = form.querySelector('button[type="submit"]');
@@ -116,14 +161,7 @@ export const FEEDBACK_ISLAND = `
       .finally(function () { btn.removeAttribute("aria-busy"); });
   });
 
-  document.addEventListener("click", function (e) {
-    var del = e.target.closest("[data-withdraw]");
-    if (!del) return;
-    var kind = del.getAttribute("data-withdraw"); // "suggestions" | "proposals"
-    call("DELETE", "/api/v1/feedback/" + kind + "/" + del.getAttribute("data-id"))
-      .then(function () { location.reload(); })
-      .catch(function (err) { if (err.message !== "signed out") say(err.message, "error"); });
-  });
+  // Withdrawing ([data-withdraw]) is handled by the shared withdraw island.
 
   // ------------------------------------------------- dialogs (proposals)
 

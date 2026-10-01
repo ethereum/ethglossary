@@ -502,8 +502,12 @@ and `src/ui/pages/translate.tsx`, the browser side `src/ui/feedback.ts`.
   popover that returns to the page), `live` (signed in: the island wires
   the controls to the API). The island binds only in `live`.
 - **Visibility:** up/down counts are public. A reader sees only their own
-  suggestions and proposals, listed under the form with a Withdraw button.
-  No name is ever shown to another visitor.
+  suggestions and proposals: the ones about a term under its form, all of
+  them on `/account`. No name is ever shown to another visitor.
+- **Withdrawing keeps the row.** Status `withdrawn` (migration 0003), never
+  a DELETE: the author still sees it, the export's default `--status open`
+  skips it, and suggesting the same value again reopens the same row. The
+  confirm dialog and the account page's select-all are `src/ui/withdraw.tsx`.
 - **Progress marks** on `/translations/:lang` are derived, never stored:
   the reader's votes and suggestions (`coveredSlots`) against the hashes of
   what is live (`slotDigest`). A slot that changes in a deploy drops the
