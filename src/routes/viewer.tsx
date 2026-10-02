@@ -11,7 +11,7 @@ import { OpenAPIHono } from "@hono/zod-openapi"
 
 import { HomePage } from "../ui/pages/home"
 import { TranslatePage } from "../ui/pages/translate"
-import type { TermListItem } from "../ui/pages/translate"
+import type { FeedbackMode, FeedbackState, TermListItem } from "../ui/pages/translate"
 import { ContextsPage } from "../ui/pages/contexts"
 import { LanguagesPage } from "../ui/pages/languages"
 import type { LanguageStat } from "../ui/pages/languages"
@@ -27,13 +27,20 @@ import {
   SUPPORTED_LANGUAGES,
 } from "../lib/glossary-data"
 import { getLanguageMeta } from "../lib/language-meta"
-import type { TranslationEntry } from "../lib/glossary-data"
+import type { GlossaryTerm, TranslationEntry } from "../lib/glossary-data"
 import { CONTEXT_TYPES, EXEMPLAR_KEY, applicableContexts, slotValue } from "../lib/context-types"
 import type { ContextId } from "../lib/context-types"
 import { LANG_COOKIE, LANG_COOKIE_MAX_AGE } from "../lib/constants"
 import type { PageUrl } from "../ui/layout"
 import type { AppEnv } from "../auth/session"
 import { navLang, pageUrl } from "../lib/page-context"
+import { getDb } from "../db/client"
+import { fieldHash, slotDigest, slotHash, termHash } from "../lib/hash"
+import { OFF_STYLE_GUIDE_FEEDBACK } from "../ui/style-guide-feedback"
+import type { StyleGuideFeedback } from "../ui/style-guide-feedback"
+import { ACCOUNTS_ENABLED } from "../lib/constants"
+import * as feedback from "../feedback/store"
+import type { SessionUser } from "../auth/session"
 import ethglossaryMark from "../ui/icons/ethglossary.svg"
 
 const app = new OpenAPIHono<AppEnv>()
@@ -164,11 +171,45 @@ app.get("/style-guide/:termId", async (c) => {
     <TermDetailPage
       term={term}
       translations={await proseByLanguage(term.id)}
+      feedback={await styleGuideFeedback(c, term)}
       activeLang={navLang(c)}
       url={pageUrl(c)}
     />
   )
 })
+
+/** The style guide page's feedback: definition tallies for everyone, the reader's own open proposals. */
+async function styleGuideFeedback(
+  c: { var: { user: SessionUser | null }; req: { url: string } },
+  term: GlossaryTerm
+): Promise<StyleGuideFeedback> {
+  const user = c.var.user
+  const mode = feedbackMode(user)
+  const path = new URL(c.req.url).pathname
+  const state: StyleGuideFeedback = {
+    ...OFF_STYLE_GUIDE_FEEDBACK,
+    mode,
+    signinHref: `/signin?next=${encodeURIComponent(path)}`,
+    termHash: termHash(term),
+    categories: [...new Set(Object.values(getTerms()).map((t) => t.category))].sort(),
+  }
+  const sql = getDb()
+  if (!sql || mode === "off") return state
+  try {
+    const hash = fieldHash(term, "definition")
+    if (hash) {
+      const tallies = await feedback.fieldTallies(sql, term.uid)
+      const mine = user ? await feedback.myFieldVotes(sql, user.id, term.uid) : new Map<string, number>()
+      const key = feedback.fieldKey("definition", hash)
+      const vote = mine.get(key)
+      state.definition = { hash, tally: tallies.get(key) ?? { up: 0, down: 0 }, mine: vote === 1 ? "up" : vote === -1 ? "down" : null }
+    }
+    if (user) state.myProposals = await feedback.myProposals(sql, user.id, term.uid)
+  } catch (err) {
+    console.error("style-guide feedback read failed:", err instanceof Error ? err.message : err)
+  }
+  return state
+}
 
 /**
  * The prose form of one term in every language.
@@ -274,9 +315,11 @@ app.get("/translations/:lang", async (c) => {
   const lang = c.req.param("lang")
   if (!getLanguageMeta(lang)) return c.notFound()
 
-  const terms = await buildTermList(lang)
+  const terms = await buildTermList(lang, c.var.user)
   rememberLanguage(c, lang)
-  return c.html(<TranslatePage lang={lang} terms={terms} url={pageUrl(c)} />)
+  return c.html(
+    <TranslatePage lang={lang} terms={terms} feedback={await feedbackState(c, lang)} url={pageUrl(c)} />
+  )
 })
 
 app.get("/translations/:lang/:termId", async (c) => {
@@ -292,7 +335,7 @@ app.get("/translations/:lang/:termId", async (c) => {
   if (!key) return c.notFound()
 
   const translations = await loadTranslations(lang)
-  const terms = await buildTermList(lang)
+  const terms = await buildTermList(lang, c.var.user)
 
   rememberLanguage(c, lang)
 
@@ -307,10 +350,79 @@ app.get("/translations/:lang/:termId", async (c) => {
       selected={{ key, term, translation: translations[key] }}
       prevTermId={prevTermId}
       nextTermId={nextTermId}
+      feedback={await feedbackState(c, lang, term, translations[key])}
       url={pageUrl(c)}
     />
   )
 })
+
+/**
+ * Which of the three feedback modes this request is in. `off` until accounts
+ * are enabled and a database is present; then `signin` or `live` by session.
+ */
+function feedbackMode(user: SessionUser | null): FeedbackMode {
+  if (!ACCOUNTS_ENABLED || !getDb()) return "off"
+  return user ? "live" : "signin"
+}
+
+/**
+ * Everything the translate page needs from the feedback store: public
+ * tallies for every visitor, the caller's own votes, suggestions and
+ * proposals, and the term's history. Every query is scoped to one term in
+ * one language, and a store that fails answers as if it were absent -- the
+ * glossary renders either way.
+ */
+async function feedbackState(
+  c: { var: { user: SessionUser | null }; req: { url: string } },
+  lang: string,
+  term?: GlossaryTerm,
+  entry?: TranslationEntry
+): Promise<FeedbackState> {
+  const user = c.var.user
+  const mode = feedbackMode(user)
+  const path = new URL(c.req.url).pathname
+  const state: FeedbackState = {
+    mode,
+    signinHref: `/signin?next=${encodeURIComponent(path)}`,
+    termHash: term ? termHash(term) : "",
+    slots: {},
+    mySuggestions: [],
+    myProposals: [],
+    history: [],
+    historySince: null,
+    historyAvailable: false,
+  }
+  const sql = getDb()
+  if (!sql || !term) return state
+
+  try {
+    state.historyAvailable = true
+    state.history = await feedback.history(sql, term.uid, lang)
+    state.historySince = await feedback.historySince(sql)
+    if (mode === "off" || !entry) return state
+
+    const tallies = await feedback.tallies(sql, term.uid, lang)
+    const mine = user ? await feedback.myVotes(sql, user.id, term.uid, lang) : new Map()
+    for (const context of applicableContexts(entry)) {
+      const hash = slotHash(entry, context)
+      if (!hash) continue
+      const key = feedback.slotKey(context, hash)
+      const vote = mine.get(key)
+      state.slots[context] = {
+        hash,
+        tally: tallies.get(key) ?? { up: 0, down: 0 },
+        mine: vote === 1 ? "up" : vote === -1 ? "down" : null,
+      }
+    }
+    if (user) {
+      state.mySuggestions = await feedback.mySuggestions(sql, user.id, term.uid, lang)
+      state.myProposals = await feedback.myProposals(sql, user.id, term.uid)
+    }
+  } catch (err) {
+    console.error("feedback read failed:", err instanceof Error ? err.message : err)
+  }
+  return state
+}
 
 // ------------------------------------------------------ legacy redirects
 
@@ -443,15 +555,36 @@ function suggestTerms(pathname: string): Array<{ id: string; term: string }> {
 /**
  * The sidebar list for one language -- every term we have a translation for.
  *
- * Progress is uniformly "none" until votes exist (Phase 3). The shape is in
- * place so wiring it up later is a data change, not a template change.
+ * Progress is the signed-in reader's, derived rather than stored: the slots
+ * they have voted on or suggested against, compared with the hashes of what
+ * is live now. A slot that changed under them drops out of "covered" on its
+ * own, which is the whole point of anchoring feedback to content.
  */
-async function buildTermList(lang: string): Promise<TermListItem[]> {
+async function buildTermList(lang: string, user: SessionUser | null = null): Promise<TermListItem[]> {
   const translations = await loadTranslations(lang)
+  const sql = getDb()
+  let covered: Set<string> | null = null
+  if (user && sql && ACCOUNTS_ENABLED) {
+    try {
+      covered = await feedback.coveredSlots(sql, user.id, lang)
+    } catch (err) {
+      console.error("progress read failed:", err instanceof Error ? err.message : err)
+    }
+  }
 
   return sortedTerms()
     .filter((t) => translations[t.key])
-    .map((t) => ({ key: t.key, id: t.id, term: t.term, progress: "none" as const }))
+    .map((t) => {
+      let progress: TermListItem["progress"] = "none"
+      if (covered) {
+        const entry = translations[t.key]
+        const { hashes } = slotDigest(entry)
+        const contexts = Object.keys(hashes)
+        const done = contexts.filter((ctx) => covered!.has(`${t.uid}:${ctx}:${hashes[ctx]}`)).length
+        progress = done === 0 ? "none" : done === contexts.length ? "full" : "partial"
+      }
+      return { key: t.key, id: t.id, term: t.term, progress }
+    })
 }
 
 export default app

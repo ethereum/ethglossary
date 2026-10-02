@@ -55,6 +55,9 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 │   ├── audit-glossary.mjs           # audit data vs v1 policy; outputs Markdown
 │   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js
 │   ├── term-uid.mjs                 # mint / backfill / check the stable term uid
+│   ├── export-feedback.mjs          # maintainers: feedback as JSONL for review
+│   ├── resolve-feedback.mjs         # maintainers: mark suggestions/proposals accepted or declined
+│   ├── remove-user.mjs              # maintainers: tombstone, ban, optionally purge an account
 │   ├── dev.mjs                      # esbuild watch + node --watch, loads .env.local
 │   └── verify-deploy.sh             # smoke test for a running deploy
 └── src/
@@ -63,7 +66,10 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     ├── db/
     │   ├── client.ts                # the postgres pool; getDb() is null without DATABASE_URL
     │   └── migrate.ts               # applies migrations/*.sql at startup under an advisory lock
-    ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe
+    ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe, ratelimit
+    ├── feedback/
+    │   ├── store.ts                 # votes, suggestions, proposals; progress + history reads
+    │   └── profile.ts               # the account page's view: per-language progress, all of a person's feedback
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -86,9 +92,19 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── icons/                   # custom .svg only (brand marks); Lucide comes from npm
     │   ├── islands.ts               # client scripts (search, language picker)
     │   ├── siwe.ts                  # Sign-In with Ethereum island (EIP-6963 + personal_sign)
+    │   ├── feedback.ts              # translate-page island: votes, suggestions, flags
+    │   ├── style-guide-feedback.tsx # style-guide feedback: definition thumb, Suggest changes, its island
+    │   ├── withdraw.tsx             # confirm dialog, tick boxes, select-all; shared by three pages
+    │   ├── feedback-shared.ts       # control classes + the island prelude (say/call) every island pastes in
+    │   ├── feedback-labels.ts       # how a person's own feedback reads back (kinds, plurals)
+    │   ├── gate.ts                  # off / signin / live: the attributes that make an inert control explain itself
+    │   ├── term-meta.ts             # what casing, script_rule and category values mean, in a sentence
+    │   ├── account-menu.ts          # nav account <details>: close on outside click / Escape
+    │   ├── account-island.ts        # account page: re-submit, typed delete confirmation
+    │   ├── feedback.ts              # votes / suggestions / proposals island for the translate view
     │   └── pages/                   # home, translate, contexts, languages, style-guide, signin, account
-    ├── schemas/                     # Zod schemas (common, style-guide, translations, filter)
-    └── routes/                      # info, style-guide, translations, filter, schema, viewer, auth
+    ├── schemas/                     # Zod schemas (common, style-guide, translations, filter, feedback)
+    └── routes/                      # info, style-guide, translations, filter, schema, viewer, auth, feedback
 ```
 
 All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scalar), `/openapi.json`, `/llms.txt`.
@@ -106,6 +122,13 @@ All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scal
 | GET    | `/api/v1/translations/{lang}/{termId}`   | Single term translation plus English source              |
 | POST   | `/api/v1/filter`                         | Submit text (max 1MB), receive matching terms            |
 | GET    | `/api/v1/schema`                         | Raw JSON Schema for the glossary data                    |
+| PUT    | `/api/v1/feedback/translations/{lang}/{termId}/votes` | Vote on translation slots. Session cookie. |
+| POST   | `/api/v1/feedback/translations/{lang}/{termId}/suggestions` | Suggest a different translation. Session cookie. |
+| POST   | `/api/v1/feedback/proposals`             | New term, redundancy/split flag, metadata change. Session cookie. |
+| DELETE | `/api/v1/feedback/{suggestions,proposals}/{id}` | Withdraw your own. Session cookie.          |
+| PUT    | `/api/v1/feedback/style-guide/{termId}/votes` | Vote on the English definition. Session cookie. |
+| POST   | `/api/v1/feedback/proposals/batch`       | Several proposals in one transaction (what Suggest changes sends). |
+| POST   | `/api/v1/feedback/{suggestions,proposals}/{id}/reopen` | Re-submit a withdrawn item while its subject is unchanged. |
 | GET    | `/llms.txt`                              | LLM-friendly description                                 |
 | GET    | `/openapi.json`                          | Auto-generated OpenAPI 3.1 spec                          |
 | GET    | `/docs`                                  | Scalar interactive API docs                              |
@@ -268,6 +291,11 @@ Rules that are easy to get wrong:
 - **URLs to Discord, GitHub, X, Farcaster or ethereum.org come from
   `src/lib/constants.ts`.** Never inline them. ETHGlossary has no social
   accounts of its own -- X and Farcaster point at ethereum.org's.
+- **The stylesheet link carries a content hash** (`cssHref()` in
+  `src/lib/assets.ts`, fed by `src/server.ts`), and everything under
+  `public/` is cached for a year as immutable. A deploy is a new URL, so a
+  returning visitor never sees new markup with the old stylesheet. Never
+  link `/assets/app.css` bare.
 - **Never hardcode the site's own origin.** Canonical links, `og:*` URLs,
   `robots.txt`, `sitemap.xml` and the OpenAPI `servers` entry all take it
   from the request through `requestOrigin()` in `src/lib/request-origin.ts`,
@@ -324,7 +352,7 @@ Rules that are easy to get wrong:
 | `/translations/all` | All languages at once. A term picker; nothing here is votable |
 | `/translations/all/:termId` | One term across 24 languages x every applicable context |
 | `/translations/:lang` | One language: the contributor view |
-| `/translations/:lang/:termId` | One term in one language, with the vote controls |
+| `/translations/:lang/:termId` | One term in one language: vote controls, suggestion form, flags, your open feedback, Versions rail |
 | `/translations/change` | Clears the stored language and returns to the picker |
 | `/contexts` | What prose / heading / tag / ui / code / plurals mean |
 | `/signin`, `/account` | Sign in (GitHub, Discord, Ethereum wallet) and the account page. `noIndex` |
@@ -465,11 +493,63 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
   `*`**, and the sub-app is mounted last in `src/index.ts`: a sub-app's
   wildcard middleware and error handler also apply to routes registered
   after its mount point.
-- **Nothing is visible yet.** `ACCOUNTS_ENABLED` in `src/lib/constants.ts`
-  is false: the nav shows the same inert "coming soon" button it always
-  did, and votes and suggestions stay disabled. `/signin` and `/account`
-  answer by URL so the flows can be verified in production. The flag flips
-  in the feedback PR, and the whole surface appears at once.
+- **`ACCOUNTS_ENABLED`** in `src/lib/constants.ts` is the one switch for
+  the whole visitor-facing surface: the nav's sign-in link and every vote,
+  suggestion and proposal control. Off, the site is the read-only glossary
+  with inert "coming soon" controls, whatever the database says.
+
+## Community feedback
+
+Signed-in readers can vote on each translation slot, suggest a different
+translation, propose a new term, flag a term as redundant or in need of a
+split, and on the style guide vote on a definition and suggest changes to a
+term's English metadata. All of it is **advisory**: it lands in the database and is read by
+maintainers with the scripts below; nothing a reader submits changes what
+the site or the API serves. The write API is `src/routes/feedback.ts`, the
+store `src/feedback/store.ts`, the page wiring in `src/routes/viewer.tsx`
+and `src/ui/pages/translate.tsx`, the browser side `src/ui/feedback.ts`.
+
+- **Every write is anchored to a content hash.** The page renders
+  `data-hash` on each slot row (and `data-term-hash` for the English entry)
+  and the client sends it back; the server recomputes it from the bundled
+  glossary and answers **409** on a mismatch. A vote can never land on a
+  value the reviewer did not see. `slot_versions` / `term_versions` rows are
+  created lazily on the first write against a value.
+- **Three page modes**, decided per request in `viewer.tsx`: `off` (flag
+  off or no database: inert controls, dashes for counts), `signin`
+  (database, no session: real counts, every control opens a "Sign in"
+  popover that returns to the page), `live` (signed in: the island wires
+  the controls to the API). The island binds only in `live`.
+- **Visibility:** up/down counts are public. A reader sees only their own
+  suggestions and proposals: the ones about a term under its form, all of
+  them on `/account`. No name is ever shown to another visitor.
+- **The style guide has feedback too.** `/style-guide/:termId` carries a
+  thumb on the definition (`field_versions` / `field_votes`, migration
+  0004, hashed per field so a note edit does not reset definition votes)
+  and "Suggest changes", a form over every reviewable field (definition,
+  note, aliases, references, avoid list, casing, category, script rule) that
+  sends one metadata proposal per field that changed, in one transaction.
+  `src/ui/style-guide-feedback.tsx`.
+- **Withdrawing keeps the row.** Status `withdrawn` (migration 0003), never
+  a DELETE: the author still sees it, the export's default `--status open`
+  skips it, and suggesting the same value again reopens the same row. The
+  confirm dialog and the account page's select-all are `src/ui/withdraw.tsx`.
+- **Progress marks** on `/translations/:lang` are derived, never stored:
+  the reader's votes and suggestions (`coveredSlots`) against the hashes of
+  what is live (`slotDigest`). A slot that changes in a deploy drops the
+  term back to partial or none on its own.
+- **The Versions rail** renders `term_changes` for the term in this
+  language plus the English entry, newest first, from the startup indexer.
+- **Limits:** per-person, in memory per replica, per hour: 600 votes, 60
+  suggestions, 20 proposals. JSON only, same-origin only (the write API has
+  no CORS headers), 16 KB body cap, and `cookieAuth` in `/openapi.json`.
+- **Maintainer scripts** need a `DATABASE_URL` (the Warpgate string):
+  `scripts/export-feedback.mjs [--since ISO] [--status open|all]` writes
+  JSONL (suggestion groups with supporter counts, proposals, tallies, with
+  `term_redirects` applied); `scripts/resolve-feedback.mjs --accept id,..
+  --decline id,.. --note "…"` records decisions so the next export skips
+  them; `scripts/remove-user.mjs <id> [--ban] [--purge]` is the moderation
+  toolkit. Acting on feedback is still a pull request against the JSON.
 
 ## Adding a glossary term
 

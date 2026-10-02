@@ -67,3 +67,7 @@ Runs locally at `http://localhost:8787`.
 ## License
 
 [MPL-2.0](LICENSE)
+
+## Community feedback
+
+Signed-in readers (GitHub, Discord or an Ethereum wallet) can vote on each translation, suggest a better one, propose new terms, and suggest changes to a term's English entry. Feedback is advisory: it is reviewed by the maintainers and never changes the glossary on its own. Vote counts are public; suggestions are visible only to their author and the maintainers. The write API is under `/api/v1/feedback/` in `/openapi.json` and needs a session cookie.

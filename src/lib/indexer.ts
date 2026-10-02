@@ -183,6 +183,9 @@ export async function runIndexer(sql: Sql, build: BuildInfo): Promise<IndexerRes
       if (!prev) {
         change(t.uid, null, null, "term_added", null, t.term)
         dirtyTerms.push(t)
+        // A term that was removed and comes back has versions on file: the
+        // one matching the current hash is live again.
+        supersededTerms.push([t.uid, t.hash])
         continue
       }
       if (prev.fields_hash === t.hash) continue
@@ -225,6 +228,7 @@ export async function runIndexer(sql: Sql, build: BuildInfo): Promise<IndexerRes
       for (const context of Object.keys(e.hashes)) {
         if (!(context in prevHashes)) {
           change(e.uid, e.lang, context, "slot_added", null, e.values[context])
+          supersededSlots.push([e.uid, e.lang, context, e.hashes[context]])
           dirty = true
         } else if (prevHashes[context] !== e.hashes[context]) {
           change(e.uid, e.lang, context, "slot_changed", prevValues[context] ?? null, e.values[context])

@@ -22,7 +22,7 @@ Reasoning:
 - Read-only data -- no need for a database.
 - Bundling eliminates a request hop and keeps cold-start latency tiny.
 
-Phase 2 (designed, not built) adds a database for community feedback. The store is **Postgres**, provisioned and run by Ethereum Foundation devops and handed to the app as a `DATABASE_URL` environment variable. Not a third-party hosted database, not anything Google-touched. The schema is plain SQL in `migrations/`, to be applied by the app itself at startup, so it stays portable. Feedback is advisory: the database never changes what the site or API serves.
+Phase 2 (built; see "Community feedback" below) adds a database for community feedback. The store is **Postgres**, provisioned and run by Ethereum Foundation devops and handed to the app as a `DATABASE_URL` environment variable. Not a third-party hosted database, not anything Google-touched. The schema is plain SQL in `migrations/`, to be applied by the app itself at startup, so it stays portable. Feedback is advisory: the database never changes what the site or API serves.
 
 ## Versioning and API stability
 
@@ -105,6 +105,31 @@ Write auth (decided 2026-09-09, shipped in the sign-in PR):
 - **Accounts are optional to the site.** Without a database, sign-in is a
   503 and the glossary is unaffected.
 - **No Google.** Ever.
+
+## Community feedback
+
+**Advisory, hash-anchored, private by default.** Decided 2026-09-09.
+
+- Feedback never changes the glossary. It is exported and reviewed by
+  maintainers; the edit path is a pull request against the JSON files.
+- Every vote or suggestion is about the exact value the reviewer saw,
+  keyed by its content hash, so a deploy that changes a slot resets that
+  slot for everyone and nothing is silently re-attributed.
+- Up/down counts are public. Suggestions and proposals are visible to their
+  author and to maintainers only, and no visitor ever sees another's name.
+- Progress and history are derived from content hashes and the startup
+  indexer, never stored as flags.
+- Withdrawing keeps the row, as status `withdrawn` (decided 2026-10-01):
+  the author still sees it and can re-submit it while its subject is
+  unchanged, the review export skips it by default, and suggesting the
+  same value again reopens the same row.
+- The English entry is reviewable too: a thumb on the definition, hashed
+  on its own, and a "Suggest changes" form whose fields each become one
+  metadata proposal, recorded together in one transaction so a retry can
+  never duplicate half a form.
+- A declined suggestion still counts as a review of that slot. Only
+  withdrawing un-reviews it; an accepted one changes the slot's hash and
+  resets it for everyone by construction.
 
 ## Payload caps
 
