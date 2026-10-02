@@ -83,22 +83,28 @@ interface LayoutProps {
 }
 
 /**
- * Runs before paint. Reads the stored preference and stamps data-theme, so
- * the toggle wins over the OS setting in both directions. Wrapped in
+ * Runs before paint. The default is the OS setting, applied by CSS alone when
+ * <html> carries no data-theme. A stored preference exists only while it
+ * disagrees with the OS: one that matches is dropped, so a reader who toggles
+ * back (or whose OS comes round to their choice) follows the system again
+ * instead of being pinned to a value they never meant to keep. Wrapped in
  * try/catch because storage throws outright in some privacy modes.
  */
 const THEME_SCRIPT = `
 (function () {
   try {
+    var os = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     var t = localStorage.getItem("ethglossary-theme");
+    if (t === os) {
+      localStorage.removeItem("ethglossary-theme");
+      t = null;
+    }
     if (t === "light" || t === "dark") {
       document.documentElement.setAttribute("data-theme", t);
     }
     // Keep the toggle's label honest before first paint. Server-rendered it
     // assumes dark; correct it when the resolved theme is actually light.
-    var light = t === "light" ||
-      (!t && window.matchMedia("(prefers-color-scheme: light)").matches);
-    if (light) {
+    if ((t || os) === "light") {
       document.addEventListener("DOMContentLoaded", function () {
         var b = document.getElementById("theme-toggle");
         if (b) b.setAttribute("aria-label", "Switch to dark theme");
@@ -112,17 +118,29 @@ const TOGGLE_SCRIPT = `
 (function () {
   var btn = document.getElementById("theme-toggle");
   if (!btn) return;
+  var root = document.documentElement;
+  var mq = window.matchMedia("(prefers-color-scheme: light)");
+  function resolved() {
+    return root.getAttribute("data-theme") || (mq.matches ? "light" : "dark");
+  }
+  function label() {
+    btn.setAttribute("aria-label", resolved() === "light" ? "Switch to dark theme" : "Switch to light theme");
+  }
   btn.addEventListener("click", function () {
-    var root = document.documentElement;
-    var current = root.getAttribute("data-theme");
-    if (!current) {
-      current = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    var next = resolved() === "light" ? "dark" : "light";
+    var os = mq.matches ? "light" : "dark";
+    // Choosing what the OS already says is choosing to follow the OS.
+    if (next === os) {
+      root.removeAttribute("data-theme");
+      try { localStorage.removeItem("ethglossary-theme"); } catch (e) {}
+    } else {
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("ethglossary-theme", next); } catch (e) {}
     }
-    var next = current === "light" ? "dark" : "light";
-    root.setAttribute("data-theme", next);
-    btn.setAttribute("aria-label", next === "light" ? "Switch to dark theme" : "Switch to light theme");
-    try { localStorage.setItem("ethglossary-theme", next); } catch (e) {}
+    label();
   });
+  // CSS follows an OS switch on its own while unstamped; the label must too.
+  mq.addEventListener("change", label);
 })();
 `
 
