@@ -187,8 +187,16 @@ function accountsAvailable(): boolean {
  * accounts available: a link to /signin that returns to the current page.
  * No database: the inert button again.
  */
-export const SignInControl = ({ block, path }: { block?: boolean; path?: string } = {}) => {
+export const SignInControl = ({
+  block,
+  path,
+  brand = "default",
+}: { block?: boolean; path?: string; brand?: BrandTone } = {}) => {
   const user = currentUser()
+  // On the hero the nav floats over artwork that is dark in both themes, so
+  // the name is a fixed white like the theme toggle beside it. The menu that
+  // drops from it is a themed panel and keeps the page's colours.
+  const hero = brand === "hero"
   const pill = `whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
     block ? "w-full" : ""
   }`
@@ -228,7 +236,9 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
     return (
       <details class="group relative" id="account-menu">
         <summary
-          class="flex list-none items-center gap-1 text-label-md leading-6 font-bold text-foreground-strong hover:underline [&::-webkit-details-marker]:hidden"
+          class={`flex list-none items-center gap-1 text-label-md leading-6 font-bold hover:underline [&::-webkit-details-marker]:hidden ${
+            hero ? "text-white" : "text-foreground-strong"
+          }`}
           aria-label={`Account menu for ${name}`}
         >
           <span class="max-w-48 truncate">{name}</span>
@@ -352,7 +362,7 @@ export const Nav = ({
       <div class="ml-auto flex items-center gap-3">
         {/* Hidden below md, where it lives in the drawer instead. */}
         <span class="hidden md:block">
-          <SignInControl path={path} />
+          <SignInControl path={path} brand={brand} />
         </span>
         <button
           id="theme-toggle"
