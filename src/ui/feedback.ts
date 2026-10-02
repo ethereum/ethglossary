@@ -10,6 +10,8 @@
  * the next click is about what is actually live.
  */
 
+import { ISLAND_HELPERS } from "./feedback-shared"
+
 export const FEEDBACK_ISLAND = `
 (function () {
   var root = document.querySelector("[data-feedback]");
@@ -21,31 +23,7 @@ export const FEEDBACK_ISLAND = `
   var base = "/api/v1/feedback/translations/" + encodeURIComponent(lang) + "/" + encodeURIComponent(termId);
   var status = document.getElementById("feedback-status");
 
-  function say(text, tone) {
-    if (!status) return;
-    status.textContent = text || "";
-    status.hidden = !text;
-    status.classList.toggle("text-rose", tone === "error");
-    status.classList.toggle("text-teal", tone === "ok");
-  }
-
-  async function call(method, path, body) {
-    var res = await fetch(path, {
-      method: method,
-      credentials: "same-origin",
-      headers: body ? { "Content-Type": "application/json" } : {},
-      body: body ? JSON.stringify(body) : undefined
-    });
-    if (res.status === 401) { location.assign(signin); throw new Error("signed out"); }
-    if (res.status === 409) {
-      say("This term changed since the page loaded. Reloading\\u2026", "error");
-      setTimeout(function () { location.reload(); }, 1500);
-      throw new Error("stale");
-    }
-    var json = res.status === 204 ? {} : await res.json().catch(function () { return {}; });
-    if (!res.ok) throw new Error(json.error || ("request failed (" + res.status + ")"));
-    return json;
-  }
+  ${ISLAND_HELPERS}
 
   // ---------------------------------------------------------------- votes
 
@@ -164,13 +142,7 @@ export const FEEDBACK_ISLAND = `
   // Withdrawing ([data-withdraw]) is handled by the shared withdraw island.
 
   // ------------------------------------------------- dialogs (proposals)
-
-  document.addEventListener("click", function (e) {
-    var opener = e.target.closest("[data-open-dialog]");
-    if (!opener) return;
-    var dlg = document.getElementById(opener.getAttribute("data-open-dialog"));
-    if (dlg && dlg.showModal) { e.preventDefault(); dlg.showModal(); }
-  });
+  // Openers ([data-open-dialog]) are bound by the shared prelude.
 
   function proposalForm(id, build) {
     var f = document.getElementById(id);

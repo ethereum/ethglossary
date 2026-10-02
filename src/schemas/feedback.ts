@@ -20,6 +20,11 @@ export const HashSchema = z
     example: "2e69ecb0f9b3fb9dd37c0ed376166171",
   })
 
+export const FieldIdSchema = z.enum(["definition"]).openapi({
+  description: "The English field the feedback is about",
+  example: "definition",
+})
+
 export const VoteItemSchema = z.object({
   context: ContextIdSchema,
   hash: HashSchema,
@@ -47,11 +52,38 @@ export const VotesResponseSchema = z
   })
   .openapi("FeedbackVotesResponse")
 
+export const FieldVoteItemSchema = z.object({
+  field: FieldIdSchema,
+  hash: HashSchema,
+  direction: z.enum(["up", "down", "none"]).openapi({ description: "`none` clears your vote" }),
+})
+
+export const FieldVotesBodySchema = z
+  .object({ votes: z.array(FieldVoteItemSchema).min(1).max(5) })
+  .openapi("FeedbackFieldVotes")
+
+export const FieldTallySchema = z.object({
+  field: FieldIdSchema,
+  hash: HashSchema,
+  up: z.number().int(),
+  down: z.number().int(),
+  mine: z.enum(["up", "down"]).nullable(),
+})
+
+export const FieldVotesResponseSchema = z
+  .object({ ok: z.literal(true), tallies: z.array(FieldTallySchema) })
+  .openapi("FeedbackFieldVotesResponse")
+
 export const SuggestionBodySchema = z
   .object({
     context: ContextIdSchema,
     hash: HashSchema,
-    value: z.string().trim().min(1).max(200).openapi({ example: "cuenta" }),
+    value: z
+      .string()
+      .trim()
+      .min(1)
+      .max(700)
+      .openapi({ description: "Up to 200 characters, except plurals: `category=form` pairs joined by `|`, up to 100 per form", example: "cuenta" }),
     reason: z.string().trim().max(1000).optional().openapi({ description: "Why this is better. Optional." }),
   })
   .openapi("FeedbackSuggestion")
@@ -110,7 +142,9 @@ export const ProposalBodySchema = z
       kind: z.literal("note"),
       termId,
       hash: HashSchema,
-      payload: z.object({ note: z.string().trim().min(1).max(1000) }),
+      payload: z.object({
+        note: z.string().trim().min(1).max(1000).nullable().openapi({ description: "`null` proposes removing the note" }),
+      }),
       reason: z.string().trim().max(1000).optional(),
     }),
     z.object({
@@ -159,8 +193,31 @@ export const ProposalBodySchema = z
       payload: z.object({ casing }),
       reason: z.string().trim().max(1000).optional(),
     }),
+    z.object({
+      kind: z.literal("category"),
+      termId,
+      hash: HashSchema,
+      payload: z.object({ category: z.string().trim().min(1).max(40) }),
+      reason: z.string().trim().max(1000).optional(),
+    }),
+    z.object({
+      kind: z.literal("script_rule"),
+      termId,
+      hash: HashSchema,
+      payload: z.object({
+        script_rule: z.enum(["translate", "calque", "transliterate", "keep_latin", "always_latin", "transliterate_with_translation"]),
+      }),
+      reason: z.string().trim().max(1000).optional(),
+    }),
   ])
   .openapi("FeedbackProposal")
+
+/** Several proposals in one transaction: what "Suggest changes" sends, one per field that changed. All or nothing. */
+export const ProposalBatchBodySchema = z
+  .object({ proposals: z.array(ProposalBodySchema).min(1).max(10) })
+  .openapi("FeedbackProposalBatch")
+
+export const ProposalBatchResponseSchema = z.object({ ids: z.array(z.string().uuid()) }).openapi("FeedbackProposalBatchResponse")
 
 export const ProposalResponseSchema = z.object({ id: z.string().uuid() }).openapi("FeedbackProposalResponse")
 
@@ -170,6 +227,7 @@ export const FeedbackErrorSchema = z
     /** On 409: the hash of the value that is live now. */
     current: HashSchema.optional(),
     context: ContextIdSchema.optional(),
+    field: FieldIdSchema.optional(),
   })
   .openapi("FeedbackError")
 

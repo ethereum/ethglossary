@@ -13,18 +13,23 @@
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi"
 import type { Context, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
+import { HTTPException } from "hono/http-exception"
+import type { z } from "@hono/zod-openapi"
 import { getDb } from "../db/client"
 import type { Sql } from "../db/client"
-import { getTerms, loadTranslations, resolveTerm } from "../lib/glossary-data"
+import { getTerms, loadTranslations, resolveTerm, SUPPORTED_LANGUAGES } from "../lib/glossary-data"
 import type { GlossaryTerm } from "../lib/glossary-data"
 import { applicableContexts, slotValue } from "../lib/context-types"
-import { slotHash, termHash } from "../lib/hash"
+import { fieldHash, fieldValue, slotHash, termHash } from "../lib/hash"
 import { requestOrigin } from "../lib/request-origin"
-import { SUPPORTED_LANGUAGES } from "../lib/glossary-data"
 import { allow } from "../auth/ratelimit"
 import type { AppEnv } from "../auth/session"
 import { LangParamSchema, TermIdParamSchema } from "../schemas/common"
 import {
+  FieldVotesBodySchema,
+  FieldVotesResponseSchema,
+  ProposalBatchBodySchema,
+  ProposalBatchResponseSchema,
   FeedbackErrorSchema,
   IdParamSchema,
   ProposalBodySchema,
@@ -36,7 +41,30 @@ import {
 } from "../schemas/feedback"
 import * as store from "../feedback/store"
 
-const app = new OpenAPIHono<AppEnv>()
+/*
+ * Validation failures answer in FeedbackErrorSchema's shape -- one line a
+ * person can read -- rather than the validator's default dump of the whole
+ * ZodError, which the islands cannot show.
+ */
+const app = new OpenAPIHono<AppEnv>({
+  defaultHook: (result, c) => {
+    if (result.success) return
+    const issue = result.error.issues[0]
+    const where = issue?.path.length ? `${issue.path.join(".")}: ` : ""
+    return c.json({ error: `${where}${issue?.message ?? "invalid request"}` }, 400)
+  },
+})
+
+/*
+ * A database that fails mid-request (a failover, a restart) surfaces here as
+ * a thrown query. Answer 503 in the shape the islands expect, log the
+ * message only. HTTPExceptions (the body limit's 413) keep their own answer.
+ */
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse()
+  console.error("feedback:", err instanceof Error ? err.message : err)
+  return c.json({ error: "accounts are temporarily unavailable" }, 503)
+})
 
 /*
  * Per-person ceilings, in memory per replica: generous for a human working
@@ -62,7 +90,8 @@ const guard: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next()
 }
 app.use("/feedback/*", guard)
-app.use("/feedback/*", bodyLimit({ maxSize: 16 * 1024 }))
+// Room for the largest valid body: a split with ten terms, each with a definition, plus a reason.
+app.use("/feedback/*", bodyLimit({ maxSize: 32 * 1024 }))
 
 const sql = (): Sql => getDb() as Sql
 const userId = (c: Context<AppEnv>) => c.var.user!.id
@@ -101,12 +130,18 @@ function canonicalPlurals(value: string, plurals: Record<string, string | null>)
 }
 
 const security = [{ cookieAuth: [] }]
+const err = (description: string) => ({ content: { "application/json": { schema: FeedbackErrorSchema } }, description })
+/** What every write can answer, from the guard and the validator. Routes add their own 400 where it means something more specific. */
 const errors = {
-  401: { content: { "application/json": { schema: FeedbackErrorSchema } }, description: "Not signed in" },
-  404: { content: { "application/json": { schema: FeedbackErrorSchema } }, description: "Unknown term or language" },
-  409: { content: { "application/json": { schema: FeedbackErrorSchema } }, description: "The value changed since the page loaded; reload" },
-  429: { content: { "application/json": { schema: FeedbackErrorSchema } }, description: "Too many writes; wait" },
+  401: err("Not signed in"),
+  403: err("Cross-origin request"),
+  404: err("Unknown term or language"),
+  409: err("The value changed since the page loaded; reload"),
+  415: err("Body is not application/json"),
+  429: err("Too many writes; wait"),
+  503: err("Database unavailable"),
 }
+const invalid = { 400: err("Invalid request body") }
 
 // ---------------------------------------------------------------- votes
 
@@ -124,6 +159,7 @@ const votesRoute = createRoute({
   },
   responses: {
     200: { content: { "application/json": { schema: VotesResponseSchema } }, description: "Current tallies for the slots voted on" },
+    ...invalid,
     ...errors,
   },
 })
@@ -164,6 +200,61 @@ app.openapi(votesRoute, async (c) => {
   )
 })
 
+// ------------------------------------------- the English definition
+
+const fieldVotesRoute = createRoute({
+  method: "put",
+  path: "/feedback/style-guide/{termId}/votes",
+  tags: ["Feedback"],
+  summary: "Vote on a term's English definition",
+  description:
+    "The style-guide counterpart of translation votes: one vote per person per version of the field. Each item carries the hash of the field as rendered; a stale hash is refused with 409. Requires a session cookie.",
+  security,
+  request: {
+    params: TermIdParamSchema,
+    body: { content: { "application/json": { schema: FieldVotesBodySchema } } },
+  },
+  responses: {
+    200: { content: { "application/json": { schema: FieldVotesResponseSchema } }, description: "Current tallies for the fields voted on" },
+    ...invalid,
+    ...errors,
+  },
+})
+
+app.openapi(fieldVotesRoute, async (c) => {
+  const { termId } = c.req.valid("param")
+  const { votes } = c.req.valid("json")
+  const term = resolveTerm(termId)
+  if (!term) return c.json({ error: "unknown term" }, 404)
+  if (!allow("feedback-votes", userId(c), LIMITS.votes, HOUR)) return c.json({ error: "too many votes this hour" }, 429)
+
+  for (const v of votes) {
+    const current = fieldHash(term, v.field)
+    if (!current) return c.json({ error: `this term has no ${v.field}`, field: v.field }, 404)
+    if (current !== v.hash) return c.json({ error: "stale", field: v.field, current }, 409)
+  }
+  const db = sql()
+  for (const v of votes) {
+    const version = await store.fieldVersionId(db, term.uid, v.field, v.hash, fieldValue(term, v.field) as string)
+    await store.setFieldVote(db, userId(c), version, v.direction === "up" ? 1 : v.direction === "down" ? -1 : null)
+  }
+
+  const tallies = await store.fieldTallies(db, term.uid)
+  const mine = await store.myFieldVotes(db, userId(c), term.uid)
+  return c.json(
+    {
+      ok: true as const,
+      tallies: votes.map((v) => {
+        const key = store.fieldKey(v.field, v.hash)
+        const t = tallies.get(key) ?? { up: 0, down: 0 }
+        const m = mine.get(key)
+        return { field: v.field, hash: v.hash, up: t.up, down: t.down, mine: m === 1 ? ("up" as const) : m === -1 ? ("down" as const) : null }
+      }),
+    },
+    200
+  )
+})
+
 // ---------------------------------------------------------- suggestions
 
 const suggestRoute = createRoute({
@@ -197,6 +288,9 @@ app.openapi(suggestRoute, async (c) => {
   if (current !== body.hash) return c.json({ error: "stale", context: body.context, current: current ?? undefined }, 409)
   const currentValue = slotValue(found.entry, body.context) as string
   let value = body.value
+  if (body.context !== "plurals" && value.length > 200) {
+    return c.json({ error: "value: a translation is at most 200 characters" }, 400)
+  }
   if (body.context === "plurals") {
     const canonical = canonicalPlurals(value, found.entry.plurals ?? {})
     if (!canonical) {
@@ -236,6 +330,62 @@ app.openapi(deleteSuggestionRoute, async (c) => {
   return removed ? c.body(null, 204) : c.json({ error: "no such open suggestion of yours" }, 404)
 })
 
+/*
+ * Re-submitting a withdrawn item reopens the same row, but only while what
+ * it was about is still live: a suggestion against a translation that has
+ * since changed, or a proposal against an entry that has, is refused with
+ * 409 so the reader looks at the new text and suggests afresh.
+ */
+const reopenSuggestionRoute = createRoute({
+  method: "post",
+  path: "/feedback/suggestions/{id}/reopen",
+  tags: ["Feedback"],
+  summary: "Re-submit one of your withdrawn suggestions",
+  security,
+  request: { params: IdParamSchema },
+  responses: { 204: { description: "Open again" }, ...invalid, ...errors, 404: err("No such withdrawn suggestion of yours") },
+})
+
+app.openapi(reopenSuggestionRoute, async (c) => {
+  const db = sql()
+  const row = await store.withdrawnSuggestion(db, userId(c), c.req.valid("param").id)
+  if (!row) return c.json({ error: "no such withdrawn suggestion of yours" }, 404)
+  const found = Object.entries(getTerms()).find(([, t]) => t.uid === row.term_uid)
+  const entry = found ? (await loadTranslations(row.lang))[found[0]] : undefined
+  if (!entry || slotHash(entry, row.context) !== row.hash) {
+    return c.json({ error: "the translation has changed since; suggest it afresh", context: row.context }, 409)
+  }
+  if (!allow("feedback-suggestions", userId(c), LIMITS.suggestions, HOUR)) return c.json({ error: "too many suggestions this hour" }, 429)
+  const reopened = await store.reopenSuggestion(db, userId(c), row.id)
+  return reopened ? c.body(null, 204) : c.json({ error: "no such withdrawn suggestion of yours" }, 404)
+})
+
+const reopenProposalRoute = createRoute({
+  method: "post",
+  path: "/feedback/proposals/{id}/reopen",
+  tags: ["Feedback"],
+  summary: "Re-submit one of your withdrawn proposals",
+  security,
+  request: { params: IdParamSchema },
+  responses: { 204: { description: "Open again" }, ...invalid, ...errors, 404: err("No such withdrawn proposal of yours") },
+})
+
+app.openapi(reopenProposalRoute, async (c) => {
+  const db = sql()
+  const row = await store.withdrawnProposal(db, userId(c), c.req.valid("param").id)
+  if (!row) return c.json({ error: "no such withdrawn proposal of yours" }, 404)
+  if (row.term_uid) {
+    const term = Object.values(getTerms()).find((t) => t.uid === row.term_uid)
+    if (!term) return c.json({ error: "that term is no longer in the glossary" }, 409)
+    if (row.fields_hash && termHash(term) !== row.fields_hash) {
+      return c.json({ error: "the entry has changed since; suggest it afresh", current: termHash(term) }, 409)
+    }
+  }
+  if (!allow("feedback-proposals", userId(c), LIMITS.proposals, HOUR)) return c.json({ error: "too many proposals this hour" }, 429)
+  const reopened = await store.reopenProposal(db, userId(c), row.id)
+  return reopened ? c.body(null, 204) : c.json({ error: "no such withdrawn proposal of yours" }, 404)
+})
+
 // ------------------------------------------------------------ proposals
 
 const proposalRoute = createRoute({
@@ -254,40 +404,85 @@ const proposalRoute = createRoute({
   },
 })
 
-app.openapi(proposalRoute, async (c) => {
-  const body = c.req.valid("json")
-  if (!allow("feedback-proposals", userId(c), LIMITS.proposals, HOUR)) return c.json({ error: "too many proposals this hour" }, 429)
-  const db = sql()
-  const reason = body.reason?.trim() || null
+type ProposalBody = z.infer<typeof ProposalBodySchema>
+type Refusal = { status: 400 | 404 | 409; body: { error: string; current?: string } }
+type Checked = { kind: ProposalBody["kind"]; term: GlossaryTerm | null; hash: string | null; lang: string | null; payload: Record<string, unknown>; reason: string | null }
 
+/** Validate one proposal against the live glossary and shape its row. Pure: nothing is written. */
+function checkProposal(body: ProposalBody): Checked | Refusal {
+  const reason = body.reason?.trim() || null
   if (body.kind === "new_term") {
     const lang = body.payload.translation?.lang ?? body.lang ?? null
-    if (lang && !SUPPORTED_LANGUAGES.includes(lang)) return c.json({ error: "unknown language" }, 404)
+    if (lang && !SUPPORTED_LANGUAGES.includes(lang)) return { status: 404, body: { error: "unknown language" } }
     if (resolveTerm(body.payload.term)) {
-      return c.json({ error: `"${body.payload.term}" already resolves to an existing term; suggest a change to that term instead` }, 400)
+      return { status: 400, body: { error: `"${body.payload.term}" already resolves to an existing term; suggest a change to that term instead` } }
     }
-    const id = await store.addProposal(db, userId(c), "new_term", null, null, lang, body.payload, reason)
-    return c.json({ id }, 201)
+    return { kind: body.kind, term: null, hash: null, lang, payload: body.payload, reason }
   }
-
-  const term: GlossaryTerm | undefined = resolveTerm(body.termId)
-  if (!term) return c.json({ error: "unknown term" }, 404)
+  const term = resolveTerm(body.termId)
+  if (!term) return { status: 404, body: { error: "unknown term" } }
   const currentHash = termHash(term)
-  if ("hash" in body && body.hash && body.hash !== currentHash) return c.json({ error: "stale", current: currentHash }, 409)
-  const version = await store.termVersionId(db, term.uid, currentHash)
-
+  if ("hash" in body && body.hash && body.hash !== currentHash) return { status: 409, body: { error: "stale", current: currentHash } }
   let payload: Record<string, unknown> = body.payload
   if (body.kind === "redundant") {
     const others = body.payload.with.map((ref) => ({ ref, term: resolveTerm(ref) }))
     const missing = others.filter((o) => !o.term).map((o) => o.ref)
-    if (missing.length) return c.json({ error: `unknown term(s): ${missing.join(", ")}` }, 400)
+    if (missing.length) return { status: 400, body: { error: `unknown term(s): ${missing.join(", ")}` } }
     const distinct = others.filter((o) => o.term!.uid !== term.uid)
-    if (!distinct.length) return c.json({ error: "a term cannot be redundant with itself" }, 400)
+    if (!distinct.length) return { status: 400, body: { error: "a term cannot be redundant with itself" } }
     payload = { with: distinct.map((o) => ({ uid: o.term!.uid, term: o.term!.term })) }
   }
+  return { kind: body.kind, term, hash: currentHash, lang: null, payload, reason }
+}
+const refused = (x: Checked | Refusal): x is Refusal => "status" in x
 
-  const id = await store.addProposal(db, userId(c), body.kind, term.uid, version, null, payload, reason)
+async function insertProposal(db: Sql, user: string, p: Checked): Promise<string> {
+  const version = p.term && p.hash ? await store.termVersionId(db, p.term.uid, p.hash) : null
+  return store.addProposal(db, user, p.kind, p.term?.uid ?? null, version, p.lang, p.payload, p.reason)
+}
+
+app.openapi(proposalRoute, async (c) => {
+  const checked = checkProposal(c.req.valid("json"))
+  if (refused(checked)) return c.json(checked.body, checked.status)
+  if (!allow("feedback-proposals", userId(c), LIMITS.proposals, HOUR)) return c.json({ error: "too many proposals this hour" }, 429)
+  const id = await insertProposal(sql(), userId(c), checked)
   return c.json({ id }, 201)
+})
+
+/*
+ * "Suggest changes" sends one proposal per field that changed. They land
+ * together or not at all, so a refusal in the middle cannot leave half a
+ * form recorded and the rest to be re-sent (and duplicated) on retry.
+ */
+const proposalBatchRoute = createRoute({
+  method: "post",
+  path: "/feedback/proposals/batch",
+  tags: ["Feedback"],
+  summary: "Record several proposals in one transaction",
+  description:
+    "Every item is checked first; any refusal answers for the whole batch and nothing is recorded. Counts against the proposals limit once per item. Requires a session cookie.",
+  security,
+  request: { body: { content: { "application/json": { schema: ProposalBatchBodySchema } } } },
+  responses: {
+    201: { content: { "application/json": { schema: ProposalBatchResponseSchema } }, description: "Recorded, ids in request order" },
+    400: err("A referenced term does not exist, or an item is invalid"),
+    ...errors,
+  },
+})
+
+app.openapi(proposalBatchRoute, async (c) => {
+  const items = c.req.valid("json").proposals.map(checkProposal)
+  const bad = items.find(refused)
+  if (bad) return c.json(bad.body, bad.status)
+  for (const _ of items) {
+    if (!allow("feedback-proposals", userId(c), LIMITS.proposals, HOUR)) return c.json({ error: "too many proposals this hour" }, 429)
+  }
+  const ids = await sql().begin(async (tx) => {
+    const out: string[] = []
+    for (const p of items as Checked[]) out.push(await insertProposal(tx as unknown as Sql, userId(c), p))
+    return out
+  })
+  return c.json({ ids: ids as string[] }, 201)
 })
 
 const deleteProposalRoute = createRoute({

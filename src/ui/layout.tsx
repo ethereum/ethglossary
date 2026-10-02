@@ -11,6 +11,7 @@ import { raw } from "hono/html"
 import { getContext } from "hono/context-storage"
 import type { AppEnv, SessionUser } from "../auth/session"
 import { Icon } from "./icon"
+import { cssHref } from "../lib/assets"
 import { ROW_LINK_ISLAND } from "./row-link"
 import { TOOLTIP_ISLAND } from "./tooltip"
 import { NAV_DRAWER_ISLAND } from "./nav-drawer"
@@ -540,7 +541,7 @@ export const Layout = ({
 
       <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       <link rel="apple-touch-icon" href="/favicon.svg" />
-      <link rel="stylesheet" href="/assets/app.css" />
+      <link rel="stylesheet" href={cssHref()} />
       <link
         rel="preload"
         href="/fonts/noto-sans-latin-400-normal.woff2"

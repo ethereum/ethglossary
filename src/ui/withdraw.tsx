@@ -18,9 +18,25 @@
 export const DIALOG =
   "fixed inset-0 z-50 m-auto h-fit max-h-[calc(100dvh-2rem)] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto rounded-card border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm"
 
-const GHOST = "rounded-full px-4 py-2 text-label-md text-foreground-subtle hover:text-foreground-strong"
-const DANGER =
-  "rounded-full border border-rose px-5 py-2 text-label-md font-bold text-rose hover:bg-rose/10 aria-busy:cursor-progress aria-busy:opacity-60"
+import { DANGER, GHOST } from "./feedback-shared"
+
+/** The tick box an open item gets, for withdrawing several at once. Value is `suggestions:<id>` or `proposals:<id>`. */
+export const Tick = ({ value, label }: { value: string; label: string }) => (
+  <input type="checkbox" name="withdraw" value={value} class="mt-1.5 size-4 shrink-0 accent-primary" aria-label={`Select ${label}`} />
+)
+
+/** Select all plus "Withdraw selected (N)", which the island fills in and wires to the dialog. */
+export const WithdrawToolbar = () => (
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <label class="inline-flex items-center gap-2 text-label-md text-foreground-muted">
+      <input type="checkbox" id="withdraw-all" class="size-4 accent-primary" />
+      Select all
+    </label>
+    <button type="button" id="withdraw-selected" class={GHOST}>
+      Withdraw selected
+    </button>
+  </div>
+)
 
 export const WithdrawDialog = ({ signinHref }: { signinHref: string }) => (
   <dialog id="withdraw-dialog" class={DIALOG} aria-labelledby="withdraw-dialog-title" data-signin={signinHref}>

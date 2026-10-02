@@ -9,6 +9,8 @@
  *                  accounts proposed it and their reasons
  *   proposal    -- a new term, a redundancy or split flag, or a metadata change
  *   tally       -- up/down counts for one slot value, live or superseded
+ *   field_tally -- up/down counts for one English field value (the style
+ *                  guide's thumb on the definition), live or not
  *
  * Each line names the term (uid and current English name), the language and
  * slot, the value that was live when the feedback was given, whether that
@@ -23,6 +25,7 @@
 
 import postgres from "postgres"
 import { readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 
 const args = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -69,7 +72,8 @@ const suggestions = await sql`
   ORDER BY sv.term_uid, sv.lang, sv.context, s.normalized_value, s.created_at`
 const groups = new Map()
 for (const r of suggestions) {
-  const key = [r.term_uid, r.lang, r.context, r.superseded_at ? "old" : "live", r.normalized_value].join("\u0000")
+  // Status is part of the key: with --status all, open supporters must not be counted alongside withdrawn or declined ones.
+  const key = [r.term_uid, r.lang, r.context, r.superseded_at ? "old" : "live", r.normalized_value, r.status].join("\u0000")
   const g = groups.get(key) ?? {
     type: "suggestion",
     term_uid: canonical(r.term_uid),
@@ -148,5 +152,38 @@ for (const t of tallies) {
   })
 }
 
+// ---- vote tallies per English field value. field_versions has no
+// superseded_at; whether a value is live is answered by hashing the master
+// field the same way the app does (SHA-256, hex, first 32).
+const sha32 = (s) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 32)
+const fieldLive = (uid, field, hash) => {
+  const t = byUid.get(canonical(uid))
+  if (!t) return false
+  if (field === "definition") return !!t.definition?.trim() && sha32(t.definition) === hash
+  return false
+}
+const fieldTallies = await sql`
+  SELECT fv.term_uid, fv.field, fv.value, fv.value_hash,
+         COUNT(*) FILTER (WHERE v.direction = 1)::int AS up,
+         COUNT(*) FILTER (WHERE v.direction = -1)::int AS down,
+         COUNT(DISTINCT v.user_id)::int AS voters
+  FROM field_votes v
+  JOIN field_versions fv ON fv.id = v.field_version_id
+  GROUP BY fv.id
+  ORDER BY fv.term_uid, fv.field`
+for (const t of fieldTallies) {
+  out({
+    type: "field_tally",
+    term_uid: canonical(t.term_uid),
+    term: termName(t.term_uid),
+    field: t.field,
+    value: t.value,
+    still_live: fieldLive(t.term_uid, t.field, t.value_hash),
+    up: t.up,
+    down: t.down,
+    voters: t.voters,
+  })
+}
+
 await sql.end()
-console.error(`exported ${groups.size} suggestion groups, ${proposals.length} proposals, ${tallies.length} tallies`)
+console.error(`exported ${groups.size} suggestion groups, ${proposals.length} proposals, ${tallies.length} tallies, ${fieldTallies.length} field tallies`)

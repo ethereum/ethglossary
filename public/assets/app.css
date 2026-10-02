@@ -482,6 +482,9 @@
   .inline-flex {
     display: inline-flex;
   }
+  .inline-grid {
+    display: inline-grid;
+  }
   .table {
     display: table;
   }
@@ -583,6 +586,9 @@
   }
   .min-h-20 {
     min-height: calc(var(--spacing) * 20);
+  }
+  .min-h-28 {
+    min-height: calc(var(--spacing) * 28);
   }
   .min-h-dvh {
     min-height: 100dvh;
@@ -1135,6 +1141,9 @@
   .align-\[-0\.1em\] {
     vertical-align: -0.1em;
   }
+  .align-text-bottom {
+    vertical-align: text-bottom;
+  }
   .align-top {
     vertical-align: top;
   }
@@ -1453,6 +1462,14 @@
     .hover\:bg-muted:hover {
       background-color: var(--color-muted);
     }
+    .hover\:bg-muted\/70:hover {
+      background-color: color-mix(in srgb, light-dark(#ecedf4, #282d3e) 70%, transparent);
+    }
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\:bg-muted\/70:hover {
+        background-color: color-mix(in oklab, var(--color-muted) 70%, transparent);
+      }
+    }
     .hover\:bg-rose\/10:hover {
       background-color: color-mix(in srgb, light-dark(var(--color-rose-700), var(--color-rose-400)) 10%, transparent);
     }
@@ -1476,6 +1493,9 @@
       .hover\:bg-white\/20:hover {
         background-color: color-mix(in oklab, var(--color-white) 20%, transparent);
       }
+    }
+    .hover\:text-foreground:hover {
+      color: var(--color-foreground);
     }
     .hover\:text-foreground-strong:hover {
       color: var(--color-foreground-strong);
@@ -1586,8 +1606,8 @@
     .lg\:sticky {
       position: sticky;
     }
-    .lg\:top-4 {
-      top: calc(var(--spacing) * 4);
+    .lg\:top-6 {
+      top: calc(var(--spacing) * 6);
     }
     .lg\:order-first {
       order: -9999;
@@ -1605,8 +1625,8 @@
       width: calc(var(--spacing) * 26);
       height: calc(var(--spacing) * 26);
     }
-    .lg\:max-h-\[calc\(100dvh-2rem\)\] {
-      max-height: calc(100dvh - 2rem);
+    .lg\:max-h-\[calc\(100dvh-7rem\)\] {
+      max-height: calc(100dvh - 7rem);
     }
     .lg\:max-h-\[calc\(100vh-16rem\)\] {
       max-height: calc(100vh - 16rem);

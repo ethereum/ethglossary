@@ -35,7 +35,9 @@ import type { PageUrl } from "../ui/layout"
 import type { AppEnv } from "../auth/session"
 import { navLang, pageUrl } from "../lib/page-context"
 import { getDb } from "../db/client"
-import { slotDigest, slotHash, termHash } from "../lib/hash"
+import { fieldHash, slotDigest, slotHash, termHash } from "../lib/hash"
+import { OFF_STYLE_GUIDE_FEEDBACK } from "../ui/style-guide-feedback"
+import type { StyleGuideFeedback } from "../ui/style-guide-feedback"
 import { ACCOUNTS_ENABLED } from "../lib/constants"
 import * as feedback from "../feedback/store"
 import type { SessionUser } from "../auth/session"
@@ -169,11 +171,45 @@ app.get("/style-guide/:termId", async (c) => {
     <TermDetailPage
       term={term}
       translations={await proseByLanguage(term.id)}
+      feedback={await styleGuideFeedback(c, term)}
       activeLang={navLang(c)}
       url={pageUrl(c)}
     />
   )
 })
+
+/** The style guide page's feedback: definition tallies for everyone, the reader's own open proposals. */
+async function styleGuideFeedback(
+  c: { var: { user: SessionUser | null }; req: { url: string } },
+  term: GlossaryTerm
+): Promise<StyleGuideFeedback> {
+  const user = c.var.user
+  const mode = feedbackMode(user)
+  const path = new URL(c.req.url).pathname
+  const state: StyleGuideFeedback = {
+    ...OFF_STYLE_GUIDE_FEEDBACK,
+    mode,
+    signinHref: `/signin?next=${encodeURIComponent(path)}`,
+    termHash: termHash(term),
+    categories: [...new Set(Object.values(getTerms()).map((t) => t.category))].sort(),
+  }
+  const sql = getDb()
+  if (!sql || mode === "off") return state
+  try {
+    const hash = fieldHash(term, "definition")
+    if (hash) {
+      const tallies = await feedback.fieldTallies(sql, term.uid)
+      const mine = user ? await feedback.myFieldVotes(sql, user.id, term.uid) : new Map<string, number>()
+      const key = feedback.fieldKey("definition", hash)
+      const vote = mine.get(key)
+      state.definition = { hash, tally: tallies.get(key) ?? { up: 0, down: 0 }, mine: vote === 1 ? "up" : vote === -1 ? "down" : null }
+    }
+    if (user) state.myProposals = await feedback.myProposals(sql, user.id, term.uid)
+  } catch (err) {
+    console.error("style-guide feedback read failed:", err instanceof Error ? err.message : err)
+  }
+  return state
+}
 
 /**
  * The prose form of one term in every language.

@@ -68,7 +68,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   └── migrate.ts               # applies migrations/*.sql at startup under an advisory lock
     ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe, ratelimit
     ├── feedback/
-    │   └── store.ts                 # votes, suggestions, proposals; progress + history reads
+    │   ├── store.ts                 # votes, suggestions, proposals; progress + history reads
+    │   └── profile.ts               # the account page's view: per-language progress, all of a person's feedback
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -91,6 +92,15 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── icons/                   # custom .svg only (brand marks); Lucide comes from npm
     │   ├── islands.ts               # client scripts (search, language picker)
     │   ├── siwe.ts                  # Sign-In with Ethereum island (EIP-6963 + personal_sign)
+    │   ├── feedback.ts              # translate-page island: votes, suggestions, flags
+    │   ├── style-guide-feedback.tsx # style-guide feedback: definition thumb, Suggest changes, its island
+    │   ├── withdraw.tsx             # confirm dialog, tick boxes, select-all; shared by three pages
+    │   ├── feedback-shared.ts       # control classes + the island prelude (say/call) every island pastes in
+    │   ├── feedback-labels.ts       # how a person's own feedback reads back (kinds, plurals)
+    │   ├── gate.ts                  # off / signin / live: the attributes that make an inert control explain itself
+    │   ├── term-meta.ts             # what casing, script_rule and category values mean, in a sentence
+    │   ├── account-menu.ts          # nav account <details>: close on outside click / Escape
+    │   ├── account-island.ts        # account page: re-submit, typed delete confirmation
     │   ├── feedback.ts              # votes / suggestions / proposals island for the translate view
     │   └── pages/                   # home, translate, contexts, languages, style-guide, signin, account
     ├── schemas/                     # Zod schemas (common, style-guide, translations, filter, feedback)
@@ -116,6 +126,9 @@ All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scal
 | POST   | `/api/v1/feedback/translations/{lang}/{termId}/suggestions` | Suggest a different translation. Session cookie. |
 | POST   | `/api/v1/feedback/proposals`             | New term, redundancy/split flag, metadata change. Session cookie. |
 | DELETE | `/api/v1/feedback/{suggestions,proposals}/{id}` | Withdraw your own. Session cookie.          |
+| PUT    | `/api/v1/feedback/style-guide/{termId}/votes` | Vote on the English definition. Session cookie. |
+| POST   | `/api/v1/feedback/proposals/batch`       | Several proposals in one transaction (what Suggest changes sends). |
+| POST   | `/api/v1/feedback/{suggestions,proposals}/{id}/reopen` | Re-submit a withdrawn item while its subject is unchanged. |
 | GET    | `/llms.txt`                              | LLM-friendly description                                 |
 | GET    | `/openapi.json`                          | Auto-generated OpenAPI 3.1 spec                          |
 | GET    | `/docs`                                  | Scalar interactive API docs                              |
@@ -278,6 +291,11 @@ Rules that are easy to get wrong:
 - **URLs to Discord, GitHub, X, Farcaster or ethereum.org come from
   `src/lib/constants.ts`.** Never inline them. ETHGlossary has no social
   accounts of its own -- X and Farcaster point at ethereum.org's.
+- **The stylesheet link carries a content hash** (`cssHref()` in
+  `src/lib/assets.ts`, fed by `src/server.ts`), and everything under
+  `public/` is cached for a year as immutable. A deploy is a new URL, so a
+  returning visitor never sees new markup with the old stylesheet. Never
+  link `/assets/app.css` bare.
 - **Never hardcode the site's own origin.** Canonical links, `og:*` URLs,
   `robots.txt`, `sitemap.xml` and the OpenAPI `servers` entry all take it
   from the request through `requestOrigin()` in `src/lib/request-origin.ts`,
@@ -483,8 +501,9 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
 ## Community feedback
 
 Signed-in readers can vote on each translation slot, suggest a different
-translation, propose a new term, and flag a term as redundant or in need of
-a split. All of it is **advisory**: it lands in the database and is read by
+translation, propose a new term, flag a term as redundant or in need of a
+split, and on the style guide vote on a definition and suggest changes to a
+term's English metadata. All of it is **advisory**: it lands in the database and is read by
 maintainers with the scripts below; nothing a reader submits changes what
 the site or the API serves. The write API is `src/routes/feedback.ts`, the
 store `src/feedback/store.ts`, the page wiring in `src/routes/viewer.tsx`
@@ -504,6 +523,13 @@ and `src/ui/pages/translate.tsx`, the browser side `src/ui/feedback.ts`.
 - **Visibility:** up/down counts are public. A reader sees only their own
   suggestions and proposals: the ones about a term under its form, all of
   them on `/account`. No name is ever shown to another visitor.
+- **The style guide has feedback too.** `/style-guide/:termId` carries a
+  thumb on the definition (`field_versions` / `field_votes`, migration
+  0004, hashed per field so a note edit does not reset definition votes)
+  and "Suggest changes", a form over every reviewable field (definition,
+  note, aliases, references, avoid list, casing, category, script rule) that
+  sends one metadata proposal per field that changed, in one transaction.
+  `src/ui/style-guide-feedback.tsx`.
 - **Withdrawing keeps the row.** Status `withdrawn` (migration 0003), never
   a DELETE: the author still sees it, the export's default `--status open`
   skips it, and suggesting the same value again reopens the same row. The

@@ -28,7 +28,10 @@ import { Layout } from "../layout"
 import type { PageUrl } from "../layout"
 import { Icon } from "../icon"
 import { describeProposal, pluralValueLabel, proposalKindLabel } from "../feedback-labels"
-import { DIALOG, WithdrawDialog, WITHDRAW_ISLAND } from "../withdraw"
+import { DIALOG, Tick, WithdrawDialog, WithdrawToolbar, WITHDRAW_ISLAND } from "../withdraw"
+import { gate } from "../gate"
+import { FIELD, GHOST, PRIMARY } from "../feedback-shared"
+import type { FeedbackMode } from "../gate"
 import arrowLeft from "lucide-static/icons/arrow-left.svg"
 import arrowRight from "lucide-static/icons/arrow-right.svg"
 import badgeCheck from "lucide-static/icons/badge-check.svg"
@@ -44,7 +47,6 @@ import { FEEDBACK_ISLAND } from "../feedback"
 import { CONTEXT_BY_ID, applicableContexts } from "../../lib/context-types"
 import type { ContextId } from "../../lib/context-types"
 import { sanitizeDefinition } from "../../lib/sanitize"
-import { COMING_SOON_TITLE } from "../../lib/constants"
 import { getLanguageMeta } from "../../lib/language-meta"
 import type { GlossaryTerm, TranslationEntry } from "../../lib/glossary-data"
 import type { HistoryEntry, Proposal, Suggestion, Tally } from "../../feedback/store"
@@ -58,7 +60,7 @@ export interface TermListItem {
   progress: ProgressState
 }
 
-export type FeedbackMode = "off" | "signin" | "live"
+export type { FeedbackMode }
 
 export interface SlotFeedback {
   hash: string
@@ -113,20 +115,6 @@ const PROGRESS_TONE: Record<ProgressState, { icon: string; text: string }> = {
   full: { icon: "text-teal", text: "text-teal" },
 }
 
-/**
- * The attributes that make a control explain itself when it cannot act.
- * `off` is the inert "coming soon" state the site has always shown; `signin`
- * keeps the control looking live and answers a click with a popover that
- * links to sign-in; `live` adds nothing and lets the island take the click.
- */
-function gate(mode: FeedbackMode, signinHref: string, verb: string): Record<string, string> {
-  if (mode === "live") return {}
-  if (mode === "signin") {
-    return { "data-tip": `Sign in to ${verb}`, "data-tip-href": signinHref }
-  }
-  return { "aria-disabled": "true", "data-tip": COMING_SOON_TITLE }
-}
-
 const OFF: FeedbackState = {
   mode: "off",
   signinHref: "/signin",
@@ -174,12 +162,11 @@ const SlotRow = ({
       type="button"
       aria-pressed={slot?.mine === direction ? "true" : "false"}
       aria-label={`${label} the ${meta.label} translation`}
-      data-context={context}
       data-vote={direction}
       {...gate(mode, signinHref, "vote")}
     >
       <Icon svg={svg} class="size-4.5" />
-      <span data-count="count">{counts ? "\u2013" : String(direction === "up" ? slot.tally.up : slot.tally.down)}</span>
+      <span data-count="">{counts ? "\u2013" : String(direction === "up" ? slot.tally.up : slot.tally.down)}</span>
     </button>
   )
 
@@ -223,8 +210,7 @@ const SlotRow = ({
             class="grid size-6 place-items-center rounded-md text-foreground-subtle transition-colors hover:bg-muted hover:text-foreground-strong aria-disabled:cursor-not-allowed"
             type="button"
             aria-label={`Suggest a different ${meta.label} translation`}
-            data-context={context}
-            data-action="suggest"
+                  data-action="suggest"
             {...gate(mode, signinHref, "suggest a translation")}
           >
             <Icon svg={squarePen} class="size-5" />
@@ -307,11 +293,6 @@ function describeChange(h: HistoryEntry): string {
   }
 }
 
-const FIELD =
-  "w-full rounded-sm border border-input bg-transparent px-3 py-2 text-body text-foreground placeholder:text-foreground-subtle focus:border-accent"
-const PRIMARY =
-  "inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-label-md font-bold text-primary-foreground transition-[filter] hover:brightness-110 aria-busy:cursor-progress aria-busy:opacity-60"
-const GHOST = "rounded-full px-4 py-2 text-label-md text-foreground-subtle hover:text-foreground-strong"
 
 /**
  * A proposal form in a <dialog>. The browser supplies the focus trap, the
@@ -436,13 +417,13 @@ export const TranslatePage = ({
       <div class="grid items-start gap-12 pt-8 pb-16 lg:grid-cols-[278px_minmax(0,1fr)] xl:grid-cols-[278px_minmax(0,1fr)_278px]">
         {/* ---------- Column 1: language, then term list ---------- */}
         {/*
-          At lg the column sticks and is capped to the viewport less 1rem each
-          side, and the list flexes to whatever is left, so it is as tall as
-          the screen allows however many terms the language has. At the very
-          top of the page the nav pushes the column's last few rem below the
-          fold; one scroll and it sits exactly in view.
+          At lg the column sticks and the list flexes to whatever is left, so
+          it is as tall as the screen allows however many terms the language
+          has. The cap is the viewport less the nav (4rem), the grid's top
+          padding (2rem) and 1rem of breathing room, so at the top of the page
+          "Suggest new term" sits just above the fold.
         */}
-        <div class="flex flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)]">
+        <div class="flex flex-col gap-4 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-7rem)]">
           {/*
             Which language you are reviewing, and how to leave it. Without this
             the page gives no sign of the choice the cookie is making on your
@@ -790,10 +771,12 @@ export const TranslatePage = ({
               {mode === "live" && (feedback.mySuggestions.length || feedback.myProposals.length) ? (
                 <div class="flex flex-col gap-3">
                   <p class={EYEBROW}>Your open feedback on this term</p>
+                  {feedback.mySuggestions.length + feedback.myProposals.length > 1 ? <WithdrawToolbar /> : null}
                   <ul class="flex flex-col gap-2">
                     {feedback.mySuggestions.map((s) => (
                       <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
-                        <span class="min-w-0">
+                        <Tick value={`suggestions:${s.id}`} label={`the suggestion ${s.value}`} />
+                        <span class="min-w-0 flex-1">
                           <span class="block text-tiny uppercase tracking-wider text-foreground-subtle">
                             {CONTEXT_BY_ID[s.context]?.label ?? s.context}
                             {feedback.slots[s.context]?.hash !== s.hash ? " · the translation has changed since" : ""}
@@ -810,7 +793,8 @@ export const TranslatePage = ({
                     ))}
                     {feedback.myProposals.map((p) => (
                       <li class="flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3">
-                        <span class="min-w-0">
+                        <Tick value={`proposals:${p.id}`} label={`the ${proposalKindLabel(p.kind).toLowerCase()} flag`} />
+                        <span class="min-w-0 flex-1">
                           <span class="block text-tiny uppercase tracking-wider text-foreground-subtle">
                             {proposalKindLabel(p.kind)}
                           </span>

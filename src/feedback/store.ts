@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto"
 import type { Sql } from "../db/client"
 import type { ContextId } from "../lib/context-types"
+import type { FieldId } from "../lib/hash"
 
 export interface Tally {
   up: number
@@ -104,17 +105,69 @@ export async function myVotes(sql: Sql, userId: string, uid: string, lang: strin
  * Every `uid:context:hash` the caller has voted on or suggested against in
  * one language. The progress mark for a term is derived from this against
  * the hashes of what is live, so a slot that changed under the reviewer
- * drops out on its own.
+ * drops out on its own. A suggestion counts whatever the maintainers said
+ * about it; only withdrawing it un-reviews the slot.
+ *
+ * Written user-first (the votes primary key and the suggestions user index
+ * lead), as a union, so it never scans slot_versions.
  */
 export async function coveredSlots(sql: Sql, userId: string, lang: string): Promise<Set<string>> {
   const rows = await sql<{ term_uid: string; context: string; value_hash: string }[]>`
-    SELECT DISTINCT sv.term_uid, sv.context, sv.value_hash
-    FROM slot_versions sv
-    WHERE sv.lang = ${lang} AND (
-      EXISTS (SELECT 1 FROM votes v WHERE v.slot_version_id = sv.id AND v.user_id = ${userId})
-      OR EXISTS (SELECT 1 FROM suggestions s WHERE s.slot_version_id = sv.id AND s.user_id = ${userId} AND s.status = 'open')
-    )`
+    SELECT sv.term_uid, sv.context, sv.value_hash
+    FROM votes v JOIN slot_versions sv ON sv.id = v.slot_version_id
+    WHERE v.user_id = ${userId} AND sv.lang = ${lang}
+    UNION
+    SELECT sv.term_uid, sv.context, sv.value_hash
+    FROM suggestions s JOIN slot_versions sv ON sv.id = s.slot_version_id
+    WHERE s.user_id = ${userId} AND sv.lang = ${lang} AND s.status <> 'withdrawn'`
   return new Set(rows.map((r) => `${r.term_uid}:${r.context}:${r.value_hash}`))
+}
+
+// ------------------------------------------- English fields (style guide)
+
+/** `field:hash`, the key field tallies and a reader's own field votes are looked up by. */
+export const fieldKey = (field: string, hash: string) => `${field}:${hash}`
+
+export async function fieldVersionId(sql: Sql, uid: string, field: FieldId, hash: string, value: string): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO field_versions (id, term_uid, field, value_hash, value)
+    VALUES (${randomUUID()}, ${uid}, ${field}, ${hash}, ${value})
+    ON CONFLICT (term_uid, field, value_hash) DO UPDATE SET value = field_versions.value
+    RETURNING id`
+  return rows[0].id
+}
+
+export async function setFieldVote(sql: Sql, userId: string, fieldVersion: string, direction: Direction | null): Promise<void> {
+  if (direction === null) {
+    await sql`DELETE FROM field_votes WHERE user_id = ${userId} AND field_version_id = ${fieldVersion}`
+    return
+  }
+  await sql`
+    INSERT INTO field_votes (user_id, field_version_id, direction)
+    VALUES (${userId}, ${fieldVersion}, ${direction})
+    ON CONFLICT (user_id, field_version_id) DO UPDATE SET direction = EXCLUDED.direction, updated_at = now()`
+}
+
+/** Up and down counts for every version of every English field of one term. */
+export async function fieldTallies(sql: Sql, uid: string): Promise<Map<string, Tally>> {
+  const rows = await sql<{ field: string; value_hash: string; up: number; down: number }[]>`
+    SELECT fv.field, fv.value_hash,
+           COUNT(*) FILTER (WHERE v.direction = 1)::int  AS up,
+           COUNT(*) FILTER (WHERE v.direction = -1)::int AS down
+    FROM field_votes v
+    JOIN field_versions fv ON fv.id = v.field_version_id
+    WHERE fv.term_uid = ${uid}
+    GROUP BY fv.field, fv.value_hash`
+  return new Map(rows.map((r) => [fieldKey(r.field, r.value_hash), { up: r.up, down: r.down }]))
+}
+
+export async function myFieldVotes(sql: Sql, userId: string, uid: string): Promise<Map<string, Direction>> {
+  const rows = await sql<{ field: string; value_hash: string; direction: number }[]>`
+    SELECT fv.field, fv.value_hash, v.direction
+    FROM field_votes v
+    JOIN field_versions fv ON fv.id = v.field_version_id
+    WHERE v.user_id = ${userId} AND fv.term_uid = ${uid}`
+  return new Map(rows.map((r) => [fieldKey(r.field, r.value_hash), r.direction as Direction]))
 }
 
 // ---------------------------------------------------------- suggestions
@@ -144,7 +197,7 @@ export async function addSuggestion(
   const normalized = normalizeValue(value)
   const inserted = await sql<{ id: string }[]>`
     INSERT INTO suggestions (id, user_id, slot_version_id, value, normalized_value, reason)
-    VALUES (${randomUUID()}, ${userId}, ${slotVersion}, ${normalized}, ${normalized}, ${reason})
+    VALUES (${randomUUID()}, ${userId}, ${slotVersion}, ${value.trim()}, ${normalized}, ${reason})
     ON CONFLICT (user_id, slot_version_id, normalized_value) DO NOTHING
     RETURNING id`
   if (inserted[0]) return { id: inserted[0].id, duplicate: false }
@@ -154,7 +207,7 @@ export async function addSuggestion(
   if (existing.status !== "withdrawn") return { id: existing.id, duplicate: true }
   await sql`
     UPDATE suggestions
-    SET status = 'open', reason = ${reason}, created_at = now(), resolved_at = NULL, resolution_note = NULL
+    SET status = 'open', value = ${value.trim()}, reason = ${reason}, created_at = now(), resolved_at = NULL, resolution_note = NULL
     WHERE id = ${existing.id}`
   return { id: existing.id, duplicate: false }
 }
@@ -192,6 +245,8 @@ export type ProposalKind =
   | "casing"
   | "alias"
   | "note"
+  | "category"
+  | "script_rule"
 
 export interface Proposal {
   id: string
@@ -240,6 +295,40 @@ export async function withdrawProposal(sql: Sql, userId: string, id: string): Pr
   return rows.length > 0
 }
 
+// ---------------------------------------------------------------- reopen
+
+/** A withdrawn suggestion of the caller's, with what it was anchored to, so the route can check it is still live. */
+export async function withdrawnSuggestion(sql: Sql, userId: string, id: string) {
+  const [row] = await sql<{ id: string; term_uid: string; lang: string; context: ContextId; hash: string }[]>`
+    SELECT s.id, sv.term_uid, sv.lang, sv.context, sv.value_hash AS hash
+    FROM suggestions s JOIN slot_versions sv ON sv.id = s.slot_version_id
+    WHERE s.id = ${id} AND s.user_id = ${userId} AND s.status = 'withdrawn'`
+  return row ?? null
+}
+
+/** Back to open, as if newly made. */
+export async function reopenSuggestion(sql: Sql, userId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE suggestions SET status = 'open', created_at = now(), resolved_at = NULL, resolution_note = NULL
+    WHERE id = ${id} AND user_id = ${userId} AND status = 'withdrawn' RETURNING id`
+  return rows.length > 0
+}
+
+export async function withdrawnProposal(sql: Sql, userId: string, id: string) {
+  const [row] = await sql<{ id: string; kind: ProposalKind; term_uid: string | null; fields_hash: string | null }[]>`
+    SELECT p.id, p.kind, p.term_uid, tv.fields_hash
+    FROM proposals p LEFT JOIN term_versions tv ON tv.id = p.term_version_id
+    WHERE p.id = ${id} AND p.user_id = ${userId} AND p.status = 'withdrawn'`
+  return row ?? null
+}
+
+export async function reopenProposal(sql: Sql, userId: string, id: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE proposals SET status = 'open', created_at = now(), resolved_at = NULL, resolution_note = NULL
+    WHERE id = ${id} AND user_id = ${userId} AND status = 'withdrawn' RETURNING id`
+  return rows.length > 0
+}
+
 // ------------------------------------------------- the account page's view
 
 export type FeedbackStatus = "open" | "accepted" | "declined" | "withdrawn"
@@ -280,10 +369,13 @@ export async function allMyProposals(sql: Sql, userId: string): Promise<OwnPropo
 /** coveredSlots() for every language at once: lang -> `uid:context:hash`. */
 export async function coverageByLanguage(sql: Sql, userId: string): Promise<Map<string, Set<string>>> {
   const rows = await sql<{ lang: string; term_uid: string; context: string; value_hash: string }[]>`
-    SELECT DISTINCT sv.lang, sv.term_uid, sv.context, sv.value_hash
-    FROM slot_versions sv
-    WHERE EXISTS (SELECT 1 FROM votes v WHERE v.slot_version_id = sv.id AND v.user_id = ${userId})
-       OR EXISTS (SELECT 1 FROM suggestions s WHERE s.slot_version_id = sv.id AND s.user_id = ${userId} AND s.status = 'open')`
+    SELECT sv.lang, sv.term_uid, sv.context, sv.value_hash
+    FROM votes v JOIN slot_versions sv ON sv.id = v.slot_version_id
+    WHERE v.user_id = ${userId}
+    UNION
+    SELECT sv.lang, sv.term_uid, sv.context, sv.value_hash
+    FROM suggestions s JOIN slot_versions sv ON sv.id = s.slot_version_id
+    WHERE s.user_id = ${userId} AND s.status <> 'withdrawn'`
   const out = new Map<string, Set<string>>()
   for (const r of rows) {
     let set = out.get(r.lang)
@@ -309,10 +401,17 @@ export interface HistoryEntry {
  * newest first. This is what the Versions rail renders; it comes from the
  * startup indexer and nothing else writes it.
  */
-/** The day the indexer first recorded the glossary: the baseline every history starts from. Null before the first run. */
+/**
+ * The day the indexer first recorded the glossary: the baseline every history
+ * starts from. Null before the first run; constant afterwards, so it is read
+ * once per process.
+ */
+let sinceCache: string | null = null
 export async function historySince(sql: Sql): Promise<string | null> {
+  if (sinceCache) return sinceCache
   const [row] = await sql<{ since: Date | null }[]>`SELECT min(deployed_at) AS since FROM glossary_snapshots`
-  return row?.since ? row.since.toISOString().slice(0, 10) : null
+  sinceCache = row?.since ? row.since.toISOString().slice(0, 10) : null
+  return sinceCache
 }
 
 export async function history(sql: Sql, uid: string, lang: string, limit = 50): Promise<HistoryEntry[]> {

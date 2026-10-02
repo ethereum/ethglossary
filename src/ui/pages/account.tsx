@@ -18,7 +18,8 @@ import type { LanguageProgress, ProfileFeedback, ProfileProposal, ProfileSuggest
 import { CONTEXT_BY_ID } from "../../lib/context-types"
 import { getLanguageMeta } from "../../lib/language-meta"
 import { describeProposal, pluralValueLabel, proposalKindLabel } from "../feedback-labels"
-import { WithdrawDialog, WITHDRAW_ISLAND } from "../withdraw"
+import { Tick, WithdrawDialog, WithdrawToolbar, WITHDRAW_ISLAND } from "../withdraw"
+import { GHOST, PRIMARY } from "../feedback-shared"
 import { ACCOUNT_ISLAND } from "../account-island"
 import { Icon } from "../icon"
 import logOut from "lucide-static/icons/log-out.svg"
@@ -56,10 +57,6 @@ const NAME_FIELD =
 const CONFIRM_FIELD =
   "w-full max-w-sm rounded-sm border border-input bg-transparent px-3 py-2 font-mono text-body text-foreground placeholder:text-foreground-subtle focus:border-accent"
 const ICON_BTN = "grid size-8 shrink-0 place-items-center rounded-md text-foreground no-underline hover:bg-muted"
-const PRIMARY =
-  "inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-label-md font-bold text-primary-foreground transition-[filter] hover:brightness-110"
-const GHOST =
-  "shrink-0 rounded-full px-4 py-2 text-label-md text-foreground-subtle hover:text-foreground-strong aria-busy:cursor-progress aria-busy:opacity-60"
 const ITEM = "flex items-start justify-between gap-3 rounded-md bg-card px-4 py-3"
 const TERM_LINK = "font-bold text-foreground-strong no-underline hover:underline"
 
@@ -120,13 +117,15 @@ const Status = ({ status }: { status: ProfileSuggestion["status"] }) =>
     <span class={`text-label-md font-bold ${STATUS_LABEL[status][1]}`}>{STATUS_LABEL[status][0]}</span>
   )
 
-/** The tick box an open item gets on the account page, for withdrawing several at once. */
-const Tick = ({ value, label }: { value: string; label: string }) => (
-  <input type="checkbox" name="withdraw" value={value} class="mt-1.5 size-4 shrink-0 accent-primary" aria-label={`Select ${label}`} />
-)
-
 const Note = ({ note }: { note: string | null }) =>
   note ? <span class="text-label-md text-foreground-muted">Maintainers: {note}</span> : null
+
+/** Withdrawn items can be re-submitted; the route reopens the same row while its subject is still live. */
+const Resubmit = ({ kind, id }: { kind: "suggestions" | "proposals"; id: string }) => (
+  <button type="button" class={GHOST} data-reopen={kind} data-id={id}>
+    Re-submit
+  </button>
+)
 
 const SuggestionItem = ({ s }: { s: ProfileSuggestion }) => {
   const dir = getLanguageMeta(s.lang)?.dir ?? "ltr"
@@ -160,6 +159,8 @@ const SuggestionItem = ({ s }: { s: ProfileSuggestion }) => {
         <button type="button" class={GHOST} data-withdraw="suggestions" data-id={s.id}>
           Withdraw
         </button>
+      ) : s.status === "withdrawn" ? (
+        <Resubmit kind="suggestions" id={s.id} />
       ) : null}
     </li>
   )
@@ -191,6 +192,8 @@ const ProposalItem = ({ p }: { p: ProfileProposal }) => (
       <button type="button" class={GHOST} data-withdraw="proposals" data-id={p.id}>
         Withdraw
       </button>
+    ) : p.status === "withdrawn" ? (
+      <Resubmit kind="proposals" id={p.id} />
     ) : null}
   </li>
 )
@@ -208,15 +211,7 @@ const Feedback = ({ feedback }: { feedback: ProfileFeedback }) => {
         <p class={EYEBROW}>Your open feedback</p>
         {openS.length || openP.length ? (
           <>
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <label class="inline-flex items-center gap-2 text-label-md text-foreground-muted">
-                <input type="checkbox" id="withdraw-all" class="size-4 accent-primary" />
-                Select all
-              </label>
-              <button type="button" id="withdraw-selected" class={GHOST}>
-                Withdraw selected
-              </button>
-            </div>
+            <WithdrawToolbar />
             <ul class="flex flex-col gap-2">
               {openS.map((s) => (
                 <SuggestionItem s={s} />
@@ -239,6 +234,7 @@ const Feedback = ({ feedback }: { feedback: ProfileFeedback }) => {
       {doneS.length || doneP.length ? (
         <details class="flex flex-col gap-3">
           <summary class={`${EYEBROW} cursor-pointer`}>Closed feedback ({doneS.length + doneP.length})</summary>
+          <p id="closed-status" role="status" class="pt-3 text-label-md text-rose" hidden></p>
           <ul class="flex flex-col gap-2 pt-3">
             {doneS.map((s) => (
               <SuggestionItem s={s} />

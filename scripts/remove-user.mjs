@@ -45,8 +45,9 @@ const counts = await sql`
   SELECT (SELECT COUNT(*) FROM votes WHERE user_id = ${userId})::int AS votes,
          (SELECT COUNT(*) FROM suggestions WHERE user_id = ${userId})::int AS suggestions,
          (SELECT COUNT(*) FROM proposals WHERE user_id = ${userId})::int AS proposals,
+         (SELECT COUNT(*) FROM field_votes WHERE user_id = ${userId})::int AS field_votes,
          (SELECT COUNT(*) FROM sessions WHERE user_id = ${userId})::int AS sessions`
-console.error(`  ${counts[0].votes} votes, ${counts[0].suggestions} suggestions, ${counts[0].proposals} proposals, ${counts[0].sessions} sessions`)
+console.error(`  ${counts[0].votes} votes, ${counts[0].field_votes} definition votes, ${counts[0].suggestions} suggestions, ${counts[0].proposals} proposals, ${counts[0].sessions} sessions`)
 console.error(`  action: ${ban ? "ban (identity kept, refused at sign-in)" : "tombstone (identity released)"}${purge ? " + purge all feedback" : ""}`)
 
 if (dryRun) {
@@ -59,6 +60,7 @@ await sql.begin(async (tx) => {
   await tx`DELETE FROM sessions WHERE user_id = ${userId}`
   if (purge) {
     await tx`DELETE FROM votes WHERE user_id = ${userId}`
+    await tx`DELETE FROM field_votes WHERE user_id = ${userId}`
     await tx`DELETE FROM suggestions WHERE user_id = ${userId}`
     await tx`DELETE FROM proposals WHERE user_id = ${userId}`
   }

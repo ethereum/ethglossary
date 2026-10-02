@@ -12,7 +12,9 @@
  *    fields, and this listener swallows the interaction and shows the reason.
  *  - Context info icons, which additionally offer a link onward to /contexts.
  *
- * Attributes: `data-tip` is the text. `data-tip-href` makes it a link: with
+ * Attributes: `data-tip` is the text, and `data-tip-title` an optional bold
+ * first line above it (the chips use it for the value being explained).
+ * `data-tip-href` makes it a link: with
  * `data-tip-link` the popover is the text plus a separately labelled link
  * ("More about Prose"); without it the text itself is the link ("Sign in to
  * vote"). A popover with a link stays until dismissed and takes focus, so the
@@ -82,7 +84,15 @@ export const TOOLTIP_ISLAND = `
     } else {
       var text = document.createElement("span");
       text.textContent = trigger.getAttribute("data-tip") || "";
-      tip.replaceChildren(text);
+      var title = trigger.getAttribute("data-tip-title");
+      if (title) {
+        var head = document.createElement("strong");
+        head.className = "block font-bold text-foreground-strong";
+        head.textContent = title;
+        tip.replaceChildren(head, text);
+      } else {
+        tip.replaceChildren(text);
+      }
       if (link) { link.textContent = label; tip.appendChild(link); }
     }
 

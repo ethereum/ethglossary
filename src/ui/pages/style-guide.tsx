@@ -17,6 +17,17 @@ import { CONTEXT_BY_ID } from "../../lib/context-types"
 import { ExternalLink } from "../link"
 import { listLanguages } from "../../lib/language-meta"
 import type { GlossaryTerm } from "../../lib/glossary-data"
+import {
+  DefinitionVotes,
+  OFF_STYLE_GUIDE_FEEDBACK,
+  OpenFeedback,
+  STYLE_GUIDE_FEEDBACK_ISLAND,
+  SuggestChangesButton,
+  SuggestChangesDialog,
+} from "../style-guide-feedback"
+import type { StyleGuideFeedback } from "../style-guide-feedback"
+import { WithdrawDialog, WITHDRAW_ISLAND } from "../withdraw"
+import { CATEGORY_MEANING, casingMeaning, scriptRuleMeaning } from "../term-meta"
 
 const aliasText = (a: string | { term: string; status: string }): string =>
   typeof a === "string" ? a : a.term
@@ -41,6 +52,26 @@ const CHIP_BASE = "inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-
 const CHIP = `${CHIP_BASE} bg-muted text-foreground-subtle`
 const CHIP_AVOID = `${CHIP_BASE} bg-rose/15 text-rose`
 const CHIP_ACTIVE = `${CHIP_BASE} bg-teal/15 text-teal`
+
+/*
+ * A metadata chip that says what it is and explains itself on click: "Casing
+ * fixed" rather than a bare "fixed", with the meaning in the popover. A
+ * button, so it is reachable and announces as expandable.
+ */
+const MetaChip = ({ kind, value, tip }: { kind: string; value: string; tip: string }) => (
+  <button
+    type="button"
+    class={`${CHIP} inline-flex cursor-pointer items-center gap-1 hover:bg-muted/70 hover:text-foreground`}
+    data-tip-title={value}
+    data-tip={tip}
+    aria-expanded="false"
+    aria-label={`${kind} ${value}: what does this mean?`}
+  >
+    <span class="opacity-70">{kind}</span>
+    <span class="font-bold">{value}</span>
+    <Icon svg={info} class="size-4 opacity-70" />
+  </button>
+)
 
 export const StyleGuidePage = ({
   terms,
@@ -161,12 +192,14 @@ export const StyleGuidePage = ({
 export const TermDetailPage = ({
   term,
   translations = [],
+  feedback = OFF_STYLE_GUIDE_FEEDBACK,
   activeLang,
   url,
 }: {
   term: GlossaryTerm
   /** The prose form in every language, in the order languages are listed. */
   translations?: Array<{ code: string; prose: string | null }>
+  feedback?: StyleGuideFeedback
   activeLang?: string
   url?: PageUrl
 }) => (
@@ -176,30 +209,45 @@ export const TermDetailPage = ({
     nav="style-guide"
     activeLang={activeLang}
     url={url}
+    island={feedback.mode === "live" ? STYLE_GUIDE_FEEDBACK_ISLAND + WITHDRAW_ISLAND : undefined}
   >
-    <div class="flex max-w-prose flex-col gap-8 pt-10 pb-14">
+    <div
+      class="flex max-w-prose flex-col gap-8 pt-10 pb-14"
+      data-sg-feedback={feedback.mode}
+      data-term-id={term.id}
+      data-term-hash={feedback.termHash}
+      data-signin={feedback.signinHref}
+    >
       <div class="flex flex-col gap-3">
         <p class="text-body font-bold text-foreground-subtle">
           <a class="no-underline hover:underline" href="/style-guide">
             Style guide
           </a>
         </p>
-        <h1 class="font-serif text-h3 font-medium text-foreground-strong">{term.term}</h1>
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <h1 class="font-serif text-h3 font-medium text-foreground-strong">{term.term}</h1>
+          <SuggestChangesButton feedback={feedback} />
+        </div>
         <div class="flex flex-wrap gap-2">
-          <span class={CHIP}>{term.category}</span>
-          <span class={CHIP}>{term.casing}</span>
-          {term.script_rule ? <span class={CHIP}>{term.script_rule}</span> : null}
+          <MetaChip kind="Category" value={term.category} tip={CATEGORY_MEANING} />
+          <MetaChip kind="Casing" value={term.casing} tip={casingMeaning(term.casing)} />
+          {term.script_rule ? <MetaChip kind="Script" value={term.script_rule} tip={scriptRuleMeaning(term.script_rule)} /> : null}
         </div>
       </div>
 
       {term.definition ? (
         <div class="flex flex-col gap-3">
-          <p class="text-body font-bold text-foreground-subtle">Definition</p>
+          <div class="flex items-center justify-between gap-4">
+            <p class="text-body font-bold text-foreground-subtle">Definition</p>
+            <DefinitionVotes feedback={feedback} />
+          </div>
           <div class="definition-html rounded-md bg-card px-4 py-4 text-body">
             {raw(sanitizeDefinition(term.definition))}
           </div>
         </div>
       ) : null}
+      {/* Where the islands report: outside the definition block, so a term without one still shows its messages. */}
+      <p id="feedback-status" role="status" class="text-label-md" hidden></p>
 
       {/*
         Directly under the definition, because that is what these came out of.
@@ -226,7 +274,7 @@ export const TermDetailPage = ({
 
       {term.avoid?.length ? (
         <div class="flex flex-col gap-3">
-          <p class="text-body font-bold text-foreground-subtle">Do not write</p>
+          <p class="text-body font-bold text-foreground-subtle">Forms to avoid</p>
           <div class="flex flex-wrap gap-2">
             {term.avoid.map((a) => (
               <span class={CHIP_AVOID}>{a}</span>
@@ -252,6 +300,8 @@ export const TermDetailPage = ({
           <p class="text-body text-foreground-muted">{term.note}</p>
         </div>
       ) : null}
+
+      <OpenFeedback feedback={feedback} />
 
       {/*
         Every language, not one. This page is the English reference, so the
@@ -329,6 +379,13 @@ export const TermDetailPage = ({
           <Icon svg={arrowRight} class="size-4" />
         </a>
       </div>
+
+      {feedback.mode === "live" ? (
+        <>
+          <SuggestChangesDialog term={term} feedback={feedback} />
+          <WithdrawDialog signinHref={feedback.signinHref} />
+        </>
+      ) : null}
     </div>
   </Layout>
 )
