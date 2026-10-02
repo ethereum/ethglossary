@@ -30,18 +30,17 @@ import { Icon } from "../icon"
 import { describeProposal, pluralValueLabel, proposalKindLabel } from "../feedback-labels"
 import { DIALOG, Tick, WithdrawDialog, WithdrawToolbar, WITHDRAW_ISLAND } from "../withdraw"
 import { gate } from "../gate"
+import { ProposalDialog, TermFlagDialogs, TermFlags } from "../term-flags"
 import { FIELD, GHOST, PRIMARY } from "../feedback-shared"
 import type { FeedbackMode } from "../gate"
 import arrowLeft from "lucide-static/icons/arrow-left.svg"
 import arrowRight from "lucide-static/icons/arrow-right.svg"
 import badgeCheck from "lucide-static/icons/badge-check.svg"
 import circleAlert from "lucide-static/icons/circle-alert.svg"
-import flag from "lucide-static/icons/flag.svg"
 import info from "lucide-static/icons/info.svg"
 import squarePen from "lucide-static/icons/square-pen.svg"
 import thumbsDown from "lucide-static/icons/thumbs-down.svg"
 import thumbsUp from "lucide-static/icons/thumbs-up.svg"
-import x from "lucide-static/icons/x.svg"
 import { TERM_FILTER_ISLAND } from "../islands"
 import { FEEDBACK_ISLAND } from "../feedback"
 import { CONTEXT_BY_ID, applicableContexts } from "../../lib/context-types"
@@ -300,50 +299,6 @@ function describeChange(h: HistoryEntry): string {
  * needs no script. Rendered only in live mode: there is no point shipping a
  * form the reader cannot submit.
  */
-const ProposalDialog = ({
-  id,
-  formId,
-  title,
-  intro,
-  children,
-  submit,
-}: {
-  id: string
-  formId: string
-  title: string
-  intro: string
-  children?: unknown
-  submit: string
-}) => (
-  <dialog id={id} class={DIALOG} aria-labelledby={`${id}-title`}>
-    <div class="flex flex-col gap-4 p-6">
-      <div class="flex items-start justify-between gap-4">
-        <h2 id={`${id}-title`} class="font-serif text-h4 font-medium text-foreground-strong">
-          {title}
-        </h2>
-        <form method="dialog">
-          <button type="submit" class="grid size-8 place-items-center rounded-md text-foreground hover:bg-muted" aria-label="Close">
-            <Icon svg={x} class="size-5" />
-          </button>
-        </form>
-      </div>
-      <p class="text-body text-foreground-muted">{intro}</p>
-      <form id={formId} class="flex flex-col gap-3">
-        {children as never}
-        <p data-note role="alert" class="text-label-md text-rose" hidden></p>
-        <div class="mt-2 flex items-center gap-3">
-          <button type="submit" class={PRIMARY}>
-            {submit}
-          </button>
-          <button type="button" class={GHOST} onclick={`document.getElementById('${id}').close()`}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </div>
-  </dialog>
-)
-
 export const TranslatePage = ({
   lang,
   terms,
@@ -414,9 +369,13 @@ export const TranslatePage = ({
         a slot row needs. So `lg` puts the list on the left and drops Versions
         below the detail; `xl` promotes Versions back to its own rail.
       */}
-      <div class="grid items-start gap-12 pt-8 pb-16 lg:grid-cols-[278px_minmax(0,1fr)] xl:grid-cols-[278px_minmax(0,1fr)_278px]">
+      <div class="grid items-start gap-8 pt-8 pb-16 lg:grid-cols-[278px_minmax(0,1fr)] lg:gap-12 xl:grid-cols-[278px_minmax(0,1fr)_278px]">
         {/* ---------- Column 1: language, then term list ---------- */}
         {/*
+          On a phone the list is capped at a few rows (the whole column stacks
+          above the term, and a tall list pushes the term itself below the
+          fold and is awkward to scroll past); tablets get 60vh.
+
           At lg the column sticks and the list flexes to whatever is left, so
           it is as tall as the screen allows however many terms the language
           has. The cap is the viewport less the nav (4rem), the grid's top
@@ -457,7 +416,7 @@ export const TranslatePage = ({
             </div>
             <ul
               id="term-list"
-              class="flex max-h-[min(60vh,32rem)] flex-col gap-1 overflow-y-auto pt-5 pb-6 lg:min-h-0 lg:max-h-none lg:flex-1"
+              class="flex max-h-36 flex-col gap-1 overflow-y-auto pt-5 pb-6 sm:max-h-[min(60vh,32rem)] lg:min-h-0 lg:max-h-none lg:flex-1"
             >
               {terms.map((t) => (
                 <li>
@@ -554,28 +513,7 @@ export const TranslatePage = ({
                     translation, so they sit with the definition rather than
                     among the slot rows.
                   */}
-                  <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-label-md text-foreground-subtle">
-                    <span class="inline-flex items-center gap-1.5">
-                      <Icon svg={flag} class="size-3.5" />
-                      Something off about this term?
-                    </span>
-                    <button
-                      type="button"
-                      class="text-accent hover:underline aria-disabled:cursor-not-allowed aria-disabled:no-underline"
-                      data-open-dialog="flag-redundant-dialog"
-                      {...gate(mode, signinHref, "flag a term")}
-                    >
-                      Redundant with another term
-                    </button>
-                    <button
-                      type="button"
-                      class="text-accent hover:underline aria-disabled:cursor-not-allowed aria-disabled:no-underline"
-                      data-open-dialog="flag-split-dialog"
-                      {...gate(mode, signinHref, "flag a term")}
-                    >
-                      Should be split in two
-                    </button>
-                  </div>
+                  <TermFlags mode={mode} signinHref={signinHref} />
                 </div>
               ) : null}
 
@@ -894,39 +832,7 @@ export const TranslatePage = ({
             </label>
           </ProposalDialog>
 
-          <ProposalDialog
-            id="flag-redundant-dialog"
-            formId="flag-redundant-form"
-            title={`Is “${selected?.term.term ?? ""}” redundant?`}
-            intro="Name the term or terms this one duplicates. The maintainers will look at merging them."
-            submit="Send flag"
-          >
-            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
-              Redundant with (one per line, or comma-separated)
-              <textarea name="with" class={`${FIELD} min-h-16`} required maxlength={1000} placeholder="e.g. smart contract"></textarea>
-            </label>
-            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
-              Why (optional)
-              <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
-            </label>
-          </ProposalDialog>
-
-          <ProposalDialog
-            id="flag-split-dialog"
-            formId="flag-split-form"
-            title={`Should “${selected?.term.term ?? ""}” be split?`}
-            intro="List the separate terms this entry should become, one per line."
-            submit="Send flag"
-          >
-            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
-              Split into
-              <textarea name="into" class={`${FIELD} min-h-20`} required maxlength={1000} placeholder={"gas (concept)\ngas limit"}></textarea>
-            </label>
-            <label class="flex flex-col gap-1 text-label-md text-foreground-subtle">
-              Why (optional)
-              <textarea name="reason" class={`${FIELD} min-h-16`} maxlength={1000}></textarea>
-            </label>
-          </ProposalDialog>
+          <TermFlagDialogs term={selected?.term.term ?? ""} termId={selected?.term.id ?? ""} termHash={feedback.termHash} />
 
           <WithdrawDialog signinHref={feedback.signinHref} />
         </>

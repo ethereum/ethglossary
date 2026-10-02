@@ -21,6 +21,7 @@ import menu from "lucide-static/icons/menu.svg"
 import moon from "lucide-static/icons/moon.svg"
 import x from "lucide-static/icons/x.svg"
 import sun from "lucide-static/icons/sun.svg"
+import heart from "lucide-static/icons/heart.svg"
 import discord from "./icons/discord.svg"
 import ethglossary from "./icons/ethglossary.svg"
 import farcaster from "./icons/farcaster.svg"
@@ -498,7 +499,9 @@ export const Footer = () => (
         ))}
       </div>
       <p class="text-center font-serif text-label-sm text-white">
-        An open-source project for the Ethereum community. MPL-2.0.
+        An open-source project, made with{" "}
+        <Icon svg={heart} class="heartbeat inline-flex size-4 align-text-bottom text-rose" aria-hidden="true" />
+        <span class="sr-only">love</span> for the Ethereum community. MPL-2.0.
       </p>
     </div>
   </footer>

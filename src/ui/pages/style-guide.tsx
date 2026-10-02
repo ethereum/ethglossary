@@ -27,6 +27,7 @@ import {
 } from "../style-guide-feedback"
 import type { StyleGuideFeedback } from "../style-guide-feedback"
 import { WithdrawDialog, WITHDRAW_ISLAND } from "../withdraw"
+import { TermFlagDialogs, TermFlags } from "../term-flags"
 import { CATEGORY_MEANING, casingMeaning, scriptRuleMeaning } from "../term-meta"
 
 const aliasText = (a: string | { term: string; status: string }): string =>
@@ -246,6 +247,7 @@ export const TermDetailPage = ({
           </div>
         </div>
       ) : null}
+      <TermFlags mode={feedback.mode} signinHref={feedback.signinHref} />
       {/* Where the islands report: outside the definition block, so a term without one still shows its messages. */}
       <p id="feedback-status" role="status" class="text-label-md" hidden></p>
 
@@ -383,6 +385,7 @@ export const TermDetailPage = ({
       {feedback.mode === "live" ? (
         <>
           <SuggestChangesDialog term={term} feedback={feedback} />
+          <TermFlagDialogs term={term.term} termId={term.id} termHash={feedback.termHash} />
           <WithdrawDialog signinHref={feedback.signinHref} />
         </>
       ) : null}

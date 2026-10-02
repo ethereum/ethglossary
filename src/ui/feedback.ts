@@ -11,6 +11,7 @@
  */
 
 import { ISLAND_HELPERS } from "./feedback-shared"
+import { TERM_FLAGS_ISLAND } from "./term-flags"
 
 export const FEEDBACK_ISLAND = `
 (function () {
@@ -144,29 +145,7 @@ export const FEEDBACK_ISLAND = `
   // ------------------------------------------------- dialogs (proposals)
   // Openers ([data-open-dialog]) are bound by the shared prelude.
 
-  function proposalForm(id, build) {
-    var f = document.getElementById(id);
-    if (!f) return;
-    f.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var data = new FormData(f);
-      var body;
-      try { body = build(data); } catch (err) { setNote(f, err.message); return; }
-      var btn = f.querySelector('button[type="submit"]');
-      btn.setAttribute("aria-busy", "true");
-      call("POST", "/api/v1/feedback/proposals", body)
-        .then(function () {
-          f.reset(); setNote(f, "");
-          var dlg = f.closest("dialog"); if (dlg) dlg.close();
-          say("Thanks. Your proposal is with the maintainers.", "ok");
-          setTimeout(function () { location.reload(); }, 800);
-        })
-        .catch(function (err) { if (err.message !== "signed out") setNote(f, err.message); })
-        .finally(function () { btn.removeAttribute("aria-busy"); });
-    });
-  }
-  function setNote(f, text) { var n = f.querySelector("[data-note]"); if (n) { n.textContent = text; n.hidden = !text; } }
-  function lines(text) { return String(text || "").split(/\\r?\\n|,/).map(function (s) { return s.trim(); }).filter(Boolean); }
+  ${TERM_FLAGS_ISLAND}
 
   proposalForm("new-term-form", function (d) {
     var term = String(d.get("term") || "").trim();
@@ -180,20 +159,5 @@ export const FEEDBACK_ISLAND = `
     return { kind: "new_term", lang: lang, payload: payload, reason: reason || undefined };
   });
 
-  proposalForm("flag-redundant-form", function (d) {
-    var others = lines(d.get("with"));
-    if (!others.length) throw new Error("Name at least one other term.");
-    var hash = root.getAttribute("data-term-hash");
-    var reason = String(d.get("reason") || "").trim();
-    return { kind: "redundant", termId: termId, hash: hash, payload: { with: others }, reason: reason || undefined };
-  });
-
-  proposalForm("flag-split-form", function (d) {
-    var into = lines(d.get("into")).map(function (t) { return { term: t }; });
-    if (into.length < 2) throw new Error("Give at least two terms, one per line.");
-    var hash = root.getAttribute("data-term-hash");
-    var reason = String(d.get("reason") || "").trim();
-    return { kind: "split", termId: termId, hash: hash, payload: { into: into }, reason: reason || undefined };
-  });
 })();
 `

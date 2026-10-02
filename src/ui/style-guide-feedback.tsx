@@ -22,6 +22,7 @@ import { DIALOG, Tick, WithdrawToolbar } from "./withdraw"
 import info from "lucide-static/icons/info.svg"
 import { CASING_MEANING, CATEGORY_MEANING, SCRIPT_RULE_MEANING } from "./term-meta"
 import { FIELD, GHOST, ISLAND_HELPERS, PRIMARY, VOTE } from "./feedback-shared"
+import { TERM_FLAGS_ISLAND } from "./term-flags"
 
 export interface StyleGuideFeedback {
   mode: FeedbackMode
@@ -291,6 +292,7 @@ export const STYLE_GUIDE_FEEDBACK_ISLAND = `
   var status = document.getElementById("feedback-status");
 
   ${ISLAND_HELPERS}
+  ${TERM_FLAGS_ISLAND}
 
   // ------------------------------------------------- definition votes
   function paint(t) {
