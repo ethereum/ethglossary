@@ -563,7 +563,7 @@ export const Layout = ({
       <meta property="og:image:height" content="630" />
       <meta
         property="og:image:alt"
-        content="An illustrated Ethereum cityscape at dusk, the ETHGlossary hero artwork"
+        content="The ETHGlossary wordmark over an illustrated Ethereum cityscape at dusk, with the word Ethereum written across the sky in a dozen scripts"
       />
       <meta name="twitter:card" content="summary_large_image" />
       {/* ETHGlossary has no accounts of its own; attribution goes to ethereum.org. */}

@@ -29,6 +29,7 @@ export const X_HANDLE = "@ethdotorg"
  * `scripts/build-og.sh`. Relative -- the origin is taken from the request, so
  * this works on whichever host the site is served from.
  */
+/** Exported at 1200x630, the size every share card is laid out at; the tags state that size. */
 export const OG_IMAGE = "/img/og.jpg"
 
 /** Shown on share cards and in search results for pages with nothing better. */
