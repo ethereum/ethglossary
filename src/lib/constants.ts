@@ -6,6 +6,7 @@
  */
 
 /** Where the translation community coordinates. */
+export const ETHEREUM_ORG_URL = "https://ethereum.org"
 export const DISCORD_URL = "https://ethereum.org/discord"
 
 /** Source repository. */
