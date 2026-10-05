@@ -29,7 +29,9 @@ export const X_HANDLE = "@ethdotorg"
  * `scripts/build-og.sh`. Relative -- the origin is taken from the request, so
  * this works on whichever host the site is served from.
  */
-export const OG_IMAGE = "/img/og.jpg"
+export const OG_IMAGE = "/img/ethglossary-og.jpg"
+/** Its pixel size, which crawlers want stated so they can lay the card out before fetching. */
+export const OG_IMAGE_SIZE = { width: 1520, height: 848 }
 
 /** Shown on share cards and in search results for pages with nothing better. */
 export const SITE_NAME = "ETHGlossary"

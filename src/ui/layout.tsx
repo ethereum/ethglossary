@@ -35,6 +35,7 @@ import {
   FARCASTER_URL,
   GITHUB_URL,
   OG_IMAGE,
+  OG_IMAGE_SIZE,
   SITE_NAME,
   X_HANDLE,
   X_URL,
@@ -559,11 +560,11 @@ export const Layout = ({
       <meta property="og:locale" content="en_US" />
       {url ? <meta property="og:url" content={url.origin + url.path} /> : null}
       {url ? <meta property="og:image" content={url.origin + (ogImage ?? OG_IMAGE)} /> : null}
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
+      <meta property="og:image:width" content={String(OG_IMAGE_SIZE.width)} />
+      <meta property="og:image:height" content={String(OG_IMAGE_SIZE.height)} />
       <meta
         property="og:image:alt"
-        content="An illustrated Ethereum cityscape at dusk, the ETHGlossary hero artwork"
+        content="The ETHGlossary wordmark over an illustrated Ethereum cityscape at dusk, with the word Ethereum written across the sky in a dozen scripts"
       />
       <meta name="twitter:card" content="summary_large_image" />
       {/* ETHGlossary has no accounts of its own; attribution goes to ethereum.org. */}
