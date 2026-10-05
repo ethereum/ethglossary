@@ -34,7 +34,7 @@ import ethereumOrg from "../icons/ethereum-org.svg"
 import banklessAcademy from "../icons/bankless-academy.svg"
 import efBlog from "../icons/ef-blog.svg"
 import { listLanguages } from "../../lib/language-meta"
-import { BANKLESS_ACADEMY_URL, EF_BLOG_URL, ETHEREUM_ORG_URL, ETHUX_REPORT_URL } from "../../lib/constants"
+import { ETHEREUM_ORG_URL } from "../../lib/constants"
 import type { DemoKind, LandingDemo } from "../../lib/landing-demo"
 
 const CTA_PRIMARY =
@@ -216,8 +216,8 @@ export const HomePage = ({
         <ul class="flex flex-wrap items-center justify-center gap-x-12 gap-y-6 text-foreground-strong md:gap-x-20">
           {[
             { svg: ethereumOrg, href: ETHEREUM_ORG_URL, label: "ethereum.org" },
-            { svg: banklessAcademy, href: BANKLESS_ACADEMY_URL, label: "Bankless Academy" },
-            { svg: efBlog, href: EF_BLOG_URL, label: "Ethereum Foundation Blog" },
+            { svg: banklessAcademy, href: "https://app.banklessacademy.com", label: "Bankless Academy" },
+            { svg: efBlog, href: "https://blog.ethereum.org", label: "Ethereum Foundation Blog" },
           ].map((p) => (
             <li>
               <ExternalLink
@@ -461,7 +461,7 @@ export const HomePage = ({
               <figcaption class="text-foreground-strong">
                 <ExternalLink
                   class="inline-block opacity-90 transition-opacity hover:opacity-100"
-                  href={BANKLESS_ACADEMY_URL}
+                  href="https://app.banklessacademy.com"
                   hideArrow
                   aria-label="Bankless Academy"
                 >
@@ -636,7 +636,7 @@ export const HomePage = ({
                 shape which product gets chosen.
               </p>
               <p class="text-base text-white/85">
-                <ExternalLink class="font-bold text-white underline" href={ETHUX_REPORT_URL} hideArrow>
+                <ExternalLink class="font-bold text-white underline" href="https://ethux.design/report/lost-in-translation.html" hideArrow>
                   Lost in Translation, EthUX
                 </ExternalLink>{" "}
                 &ndash; Audit of 6 months of ethereum.org wallet clicks
