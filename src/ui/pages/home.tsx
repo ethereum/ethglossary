@@ -62,7 +62,7 @@ export const HomePage = ({ activeLang, url }: { activeLang?: string; url?: PageU
 
   return (
     <Layout
-      title="ETHGlossary"
+      title="ETHGlossary: Ethereum terms, style guide and translations"
       description="Community-reviewed Ethereum terminology in 24 languages, with an English style guide and a simple API."
       bare
       brand="hero"
