@@ -77,7 +77,7 @@
      the yellow ramp on light rather than staying #f7e544. */
   --color-primary: var(--color-yellow-400);
   --color-primary-foreground: var(--color-slate-900);
-  --color-accent: light-dark(var(--color-yellow-600), var(--color-yellow-400));
+  --color-accent: light-dark(var(--color-yellow-700), var(--color-yellow-400));
 
   /* --- Categorical accents. Decorative; context carries the meaning. --- */
   --color-violet: light-dark(var(--color-violet-700), var(--color-violet-400));

@@ -34,16 +34,19 @@ export const ExternalLink = ({
   children,
 }: LinkProps) => {
   const external = isExternal(href)
+  // Opening a new tab is announced, so the change of context is not a surprise (WCAG 3.2.5).
+  const label = ariaLabel && external ? `${ariaLabel} (opens in a new tab)` : ariaLabel
 
   return (
     <a
       href={href}
       class={cls}
-      aria-label={ariaLabel}
+      aria-label={label}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer noopener" : undefined}
     >
       {children}
+      {external && !ariaLabel ? <span class="sr-only"> (opens in a new tab)</span> : null}
       {external && !hideArrow ? (
         <Icon svg={externalLink} class="size-3.5 inline-block shrink-0 align-[-0.1em]" />
       ) : null}

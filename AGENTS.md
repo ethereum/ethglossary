@@ -83,6 +83,7 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── indexer.ts               # startup: records what a deploy changed (term_changes)
     │   ├── context-types.ts         # the six votable translation slots; applicableContexts()
     │   ├── language-meta.ts         # endonyms, regions, script direction (viewer only)
+    │   ├── landing-demo.ts          # the landing page's two live demos, built from the glossary once per process
     │   └── sanitize.ts              # HTML allowlist for definitions
     ├── ui/                          # server-rendered hono/jsx viewer
     │   ├── app.css                  # Tailwind v4 source: @theme tokens + utilities

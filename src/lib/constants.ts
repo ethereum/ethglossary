@@ -6,6 +6,11 @@
  */
 
 /** Where the translation community coordinates. */
+export const ETHEREUM_ORG_URL = "https://ethereum.org"
+export const BANKLESS_ACADEMY_URL = "https://app.banklessacademy.com"
+export const EF_BLOG_URL = "https://blog.ethereum.org"
+/** The EthUX audit the landing page quotes: six months of ethereum.org wallet clicks by language. */
+export const ETHUX_REPORT_URL = "https://ethux.design/report/lost-in-translation.html"
 export const DISCORD_URL = "https://ethereum.org/discord"
 
 /** Source repository. */
