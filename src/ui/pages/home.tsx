@@ -39,6 +39,7 @@ import { ETHEREUM_ORG_URL } from "../../lib/constants"
 import type { DemoKind, LandingDemo } from "../../lib/landing-demo"
 import type { HeroRelay } from "../../lib/hero-relay"
 import { HERO_GLOBE_ISLAND } from "../hero-globe"
+import { HERO_COMMUNITY_ISLAND } from "../hero-community"
 
 const CTA_PRIMARY =
   "inline-flex h-14 items-center gap-2 rounded-full bg-primary px-6 text-body font-bold text-primary-foreground no-underline transition-[filter] hover:brightness-110 hover:no-underline"
@@ -163,29 +164,27 @@ export const HomePage = ({
       description="Community-reviewed Ethereum terminology in 24 languages, with an English style guide and a simple API."
       bare
       brand="hero"
-      island={HERO_GLOBE_ISLAND}
+      island={HERO_COMMUNITY_ISLAND + HERO_GLOBE_ISLAND}
       activeLang={activeLang}
       url={url}
     >
       {/* ---------- Hero: frame 280:234, 1440x640 ---------- */}
       <header class="hero-space relative overflow-hidden border-b border-border-subtle">
         {/*
-          The globe island (src/ui/hero-globe.ts) paints into this box once the
-          page has loaded and fades it in. Until then, and wherever WebGL2 is
-          missing, the header's own gradient is the hero. Below md the globe
-          sits behind the copy, so it is dimmed there.
+          The community island (src/ui/hero-community.ts) paints into this box
+          once the page has loaded and fades it in. Until then, and wherever
+          WebGL2 is missing, the header's own gradient is the hero. The island
+          dims the scene under the copy itself, and draws the site's dot grid
+          behind the hall rather than over it, so there is no CSS overlay here.
         */}
         <div
-          data-globe="hero"
-          class="absolute inset-0 opacity-0 transition-opacity duration-1000 max-md:[&>canvas]:opacity-50"
-          data-lights="/img/earth-night-2016.webp"
-          data-relief="/img/earth-relief.webp"
+          id="hero-scene"
+          class="absolute inset-0 opacity-0 transition-opacity duration-1000"
           aria-hidden="true"
         />
         <script type="application/json" id="hero-globe-data">
           {raw(JSON.stringify(relay).replace(/</g, "\\u003c"))}
         </script>
-        <div class="dot-grid-fixed absolute inset-0" aria-hidden="true" />
 
         {/* pt clears the nav, which floats over this section. */}
         <div class="wrap relative flex flex-col justify-center gap-4 pt-32 pb-24 drop-shadow-hero md:min-h-[640px]">
@@ -293,28 +292,20 @@ export const HomePage = ({
               class="pointer-events-none absolute top-full -right-12 -z-10 hidden h-[251px] -translate-y-1/2 opacity-25 xl:block"
             />
             {/*
-              302px image inside two concentric rings: the first 1rem beyond
-              the image radius, the second another 0.5rem beyond that.
-              The rings sit outside the image box, so the container has to
-              leave room for them or the outer one clears a narrow viewport.
-              Figma 280:3263/280:3264: +21.5px then +7px on a 302px image.
+              The globe (src/ui/hero-globe.ts, "inset") in the Figma's 302px
+              image slot, drawn an eighth larger than it, with a daytime Earth
+              in light mode. The canvas overhangs the slot so the atmosphere
+              has room: 4rem a side from md, and only as far as the slot's own
+              margin below that, so a phone never scrolls sideways.
             */}
-            <div class="relative grid aspect-square w-[calc(100%-3.5rem)] max-w-[302px] shrink-0 place-items-center">
-              <span
-                class="absolute -inset-5 rounded-full border border-accent"
+            <div class="relative aspect-square w-[calc(100%-3.5rem)] max-w-[302px] shrink-0">
+              <div
+                data-globe="inset"
+                data-lights="/img/earth-night-2016.webp"
+                data-relief="/img/earth-relief.webp"
+                data-day="/img/earth-day.webp"
+                class="absolute -inset-7 opacity-0 transition-opacity duration-1000 md:-inset-16"
                 aria-hidden="true"
-              />
-              <span
-                class="absolute -inset-7 rounded-full border border-accent"
-                aria-hidden="true"
-              />
-              <img
-                src="/img/globe-dining-room.png"
-                alt=""
-                width="302"
-                height="302"
-                loading="lazy"
-                class="size-full rounded-full object-cover"
               />
             </div>
           </div>

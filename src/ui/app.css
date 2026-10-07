@@ -478,9 +478,9 @@
 }
 
 /*
- * The landing hero's ground before the globe fades in, and the whole hero
- * where WebGL2 is missing: the same plum-to-midnight sweep the shader paints,
- * with a violet bloom where the globe will sit.
+ * The landing hero's ground before its scene fades in, and the whole hero
+ * where WebGL2 is missing: a plum-to-midnight sweep with a violet bloom on
+ * the right, clear of the copy.
  */
 @utility hero-space {
   background-color: var(--color-slate-900);

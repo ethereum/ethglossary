@@ -12,6 +12,13 @@
  * canvas on top draws the arcs and the words, because text in a shader is a
  * font atlas we do not need.
  *
+ * It mounts on every [data-globe] element: "hero" is the full-bleed header
+ * above, "inset" is a transparent globe an eighth larger than the slot its
+ * box overhangs, with no sky behind it. The inset sits on the page, so it
+ * follows the theme: in light mode it crossfades to a daytime Earth (Natural
+ * Earth I shaded relief and water, public/img/earth-day.webp, public domain),
+ * loaded only the first time light mode is in effect.
+ *
  * It costs nothing until the page has loaded, and it stays still for
  * prefers-reduced-motion and Save-Data, off-screen, and in a hidden tab. Without
  * WebGL2 the header's own gradient is the hero. Every word comes from
@@ -26,10 +33,10 @@ export const HERO_GLOBE_ISLAND = `
   var data;
   try { data = JSON.parse(src.textContent); } catch (e) { return; }
   document.querySelectorAll("[data-globe]").forEach(function (host) {
-    mount(host);
+    mount(host, host.dataset.globe === "inset");
   });
 
-  function mount(host) {
+  function mount(host, inset) {
     var still = matchMedia("(prefers-reduced-motion: reduce)").matches ||
       !!(navigator.connection && navigator.connection.saveData);
 
@@ -71,13 +78,16 @@ export const HERO_GLOBE_ISLAND = `
       "col+=stars(fc,19.,.93,1.1)*.8+stars(fc,57.,.9,1.7);" +
       "o=vec4(col,1.);}";
 
-    var MAIN = COMMON + "uniform sampler2D uBg,uTex,uRelief;uniform vec2 uRot;" +
-      "void main(){vec2 fc=gl_FragCoord.xy;vec3 col=texture(uBg,fc/uRes).rgb;" +
+    var MAIN = COMMON + "uniform sampler2D uBg,uTex,uRelief,uDay;uniform vec2 uRot;uniform float uInset,uDayMix;" +
+      "void main(){vec2 fc=gl_FragCoord.xy;vec3 col=uInset>.5?vec3(0):texture(uBg,fc/uRes).rgb;" +
       "vec2 d=(fc-uGlobe.xy)/uGlobe.z;float r=length(d);" +
       "vec3 L=normalize(vec3(.8,.3,-.5));vec2 dn=d/max(r,1e-4);" +
       "float sun=clamp(dot(dn,normalize(L.xy))*.5+.5,0.,1.);" +
-      "vec3 atm=mix(VIOLET,TEAL,sun*.7);atm=mix(atm,ROSE,pow(sun,5.)*.7);" +
+      "vec3 atm=mix(VIOLET,TEAL,sun*.7);atm=mix(atm,ROSE,pow(sun,5.)*.7);atm=mix(atm,vec3(.45,.68,1.),uDayMix);" +
       "if(r>=1.){float a=exp(-(r-1.)*14.)*.55+exp(-(r-1.)*3.)*.12;col+=atm*a;" +
+      // Inset: premultiplied, so the glow lies over whatever the page is.
+      // The glow is cut to zero just inside the canvas edge so the box never shows.
+      "if(uInset>.5){a*=1.-smoothstep(1.06,.97*min(uRes.x,uRes.y)*.5/uGlobe.z,r);o=vec4(atm*a,clamp(a,0.,1.));return;}" +
       "o=vec4(col,1.);return;}" +
       "float z=sqrt(1.-r*r);vec3 nv=vec3(d,z);" +
       "float ct=cos(uRot.y),st=sin(uRot.y);vec3 w1=vec3(nv.x,nv.y*ct+nv.z*st,-nv.y*st+nv.z*ct);" +
@@ -101,8 +111,14 @@ export const HERO_GLOBE_ISLAND = `
       "surf*=mix(.35,1.,pow(z,.6));" +
       "surf+=atm*pow(1.-z,3.)*.45;" +
       "float day=max(dot(nv,L),0.);surf+=(ROSE*.45+TEAL*land*.25)*pow(day,1.6)+GOLD*pow(day,6.)*.3;" +
-      "float aa=smoothstep(1.,1.-1.5/uGlobe.z,r);col=mix(col+atm*.55,surf,aa);" +
-      "o=vec4(col,1.);}";
+      // Day: the colour map lit from the upper left, with a pale blue limb.
+      "if(uDayMix>0.){vec3 dc=textureGrad(uDay,uv,dx,dy).rgb;float lam=max(dot(nv,normalize(vec3(-.35,.45,.82))),0.);" +
+      "surf=mix(surf,dc*(.42+.7*lam)+vec3(.55,.75,1.)*pow(1.-z,2.5)*.55,uDayMix);}" +
+      "float aa=smoothstep(1.,1.-1.5/uGlobe.z,r);" +
+      // Inset: the antialiased rim blends coverage too, into the glow's own
+      // alpha at the limb (.67), or it is an opaque stepped ring on a light page.
+      "if(uInset>.5){o=vec4(mix(atm*.67,surf,aa),mix(.67,1.,aa));return;}" +
+      "col=mix(col+atm*.55,surf,aa);o=vec4(col,1.);}";
 
     // ---------------------------------------------------------------- setup
 
@@ -134,10 +150,11 @@ export const HERO_GLOBE_ISLAND = `
       return c;
     }
 
-    function texture(img) {
+    function texture(img, rgb) {
       var t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, img);
+      if (rgb) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, img);
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, img);
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
@@ -147,10 +164,10 @@ export const HERO_GLOBE_ISLAND = `
 
     function init(imgs) {
       var glc = canvas();
-      gl = glc.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "low-power" });
+      gl = glc.getContext("webgl2", { antialias: false, alpha: inset, powerPreference: "low-power" });
       if (!gl) { glc.remove(); return false; }
       progBg = program(BG, ["uRes", "uGlobe", "uDpr"]);
-      progMain = program(MAIN, ["uRes", "uGlobe", "uRot", "uBg", "uTex", "uRelief"]);
+      progMain = program(MAIN, ["uRes", "uGlobe", "uRot", "uBg", "uTex", "uRelief", "uInset", "uDay", "uDayMix"]);
       if (!progBg || !progMain) { glc.remove(); return false; }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
@@ -176,7 +193,14 @@ export const HERO_GLOBE_ISLAND = `
     function layout() {
       var b = host.getBoundingClientRect();
       W = b.width; H = b.height;
-      if (W >= 768) {
+      if (inset) {
+        // An eighth larger than the slot it sits in, while leaving the
+        // canvas's overhang enough room for the atmosphere.
+        var slot = host.parentElement.getBoundingClientRect().width;
+        globe.r = Math.min((slot / 2) * 1.125, (Math.min(W, H) / 2) * 0.86);
+        globe.x = W / 2;
+        globe.y = H / 2;
+      } else if (W >= 768) {
         // Just past the top, bottom and right edges (a few percent of the
         // diameter each), shrunk where needed so no more than a sliver of the
         // limb slides under the copy.
@@ -195,6 +219,7 @@ export const HERO_GLOBE_ISLAND = `
       gl.canvas.width = gw; gl.canvas.height = gh;
       fx.width = Math.round(W * fdpr); fx.height = Math.round(H * fdpr);
 
+      if (inset) return;
       gl.bindTexture(gl.TEXTURE_2D, bgTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gw, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -350,7 +375,7 @@ export const HERO_GLOBE_ISLAND = `
         ctx.beginPath(); ctx.arc(q[0], q[1], 3 + age * 14, 0, 7); ctx.stroke();
       }
       // Below md the globe sits behind the copy: rings only, no words.
-      if (W < 768) return true;
+      if (!inset && W < 768) return true;
       var rtl = l.city.c.dir === "rtl";
       ctx.font = "500 15px 'Noto Sans', system-ui, sans-serif";
       ctx.direction = rtl ? "rtl" : "ltr";
@@ -390,12 +415,17 @@ export const HERO_GLOBE_ISLAND = `
       gl.useProgram(progMain.p);
       setGlobe(progMain.u, gw, gh);
       gl.uniform2f(progMain.u.uRot, yaw, tilt);
+      gl.uniform1f(progMain.u.uInset, inset ? 1 : 0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bgTex);
       gl.uniform1i(progMain.u.uBg, 0);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, lights);
       gl.uniform1i(progMain.u.uTex, 1);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, relief);
       gl.uniform1i(progMain.u.uRelief, 2);
+      // Until the day map exists, bind the night one in its place: uDayMix is 0 then.
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, dayTex || lights);
+      gl.uniform1i(progMain.u.uDay, 3);
+      gl.uniform1f(progMain.u.uDayMix, dayTex ? dayMix : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
       ctx.setTransform(fdpr, 0, 0, fdpr, 0, 0);
@@ -414,6 +444,9 @@ export const HERO_GLOBE_ISLAND = `
       var dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       clock += dt;
+      if (dayTex && dayMix !== dayTarget) {
+        dayMix = dayTarget > dayMix ? Math.min(dayTarget, dayMix + dt / 0.6) : Math.max(dayTarget, dayMix - dt / 0.6);
+      }
       if (!drag) {
         yaw += (spin + vel) * dt;
         vel *= Math.pow(0.05, dt);
@@ -434,11 +467,38 @@ export const HERO_GLOBE_ISLAND = `
       requestAnimationFrame(tick);
     }
 
+    // ---------------------------------------------------------------- theme (inset only)
+
+    var dayTex = null, dayMix = 0, dayTarget = 0, dayLoading = false;
+    var schemeLight = matchMedia("(prefers-color-scheme: light)");
+
+    /** The resolved theme, the same way the layout's toggle reads it. */
+    function lightTheme() {
+      return (document.documentElement.getAttribute("data-theme") || (schemeLight.matches ? "light" : "dark")) === "light";
+    }
+
+    function syncTheme() {
+      if (!inset || !gl) return;
+      dayTarget = lightTheme() ? 1 : 0;
+      if (dayTarget && !dayTex && !dayLoading) {
+        dayLoading = true;
+        load(host.dataset.day).then(function (img) { dayTex = texture(img, true); refresh(); }, function () {});
+      }
+      refresh();
+    }
+
+    /** Paused or still, there is no tick to fade, so jump and redraw. */
+    function refresh() {
+      if (running) return;
+      if (dayTex) dayMix = dayTarget;
+      draw();
+    }
+
     // ---------------------------------------------------------------- drag (mouse only: touch scrolls the page)
 
     var drag = null;
     function clampTilt(t) { return Math.max(-1.3, Math.min(1.3, t)); }
-    var header = host.parentElement;
+    var header = inset ? host : host.parentElement;
     function onGlobe(e) {
       var b = host.getBoundingClientRect();
       var dx = e.clientX - b.left - globe.x, dy = e.clientY - b.top - globe.y;
@@ -479,8 +539,11 @@ export const HERO_GLOBE_ISLAND = `
     }
 
     function start() {
-      Promise.all([load(host.dataset.lights), load(host.dataset.relief)]).then(function (imgs) {
+      var day = inset && lightTheme();
+      var urls = [host.dataset.lights, host.dataset.relief].concat(day ? [host.dataset.day] : []);
+      Promise.all(urls.map(load)).then(function (imgs) {
         if (!init(imgs)) return;
+        if (day) { dayTex = texture(imgs[2], true); dayMix = dayTarget = 1; }
         layout();
         if (still) {
           // One composed frame: a term already landed in the languages facing us.
@@ -499,6 +562,10 @@ export const HERO_GLOBE_ISLAND = `
         document.addEventListener("visibilitychange", function () {
           if (document.hidden) running = false; else play();
         });
+        if (inset) {
+          new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+          schemeLight.addEventListener("change", syncTheme);
+        }
         play();
       }, function () {});
     }
