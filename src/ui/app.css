@@ -478,9 +478,21 @@
 }
 
 /*
- * The hero's grid sits on the artwork, which is the same fixed dark image in
+ * The landing hero's ground before the globe fades in, and the whole hero
+ * where WebGL2 is missing: the same plum-to-midnight sweep the shader paints,
+ * with a violet bloom where the globe will sit.
+ */
+@utility hero-space {
+  background-color: var(--color-slate-900);
+  background-image:
+    radial-gradient(circle at 75% 55%, color-mix(in oklab, var(--color-violet-400) 22%, transparent), transparent 40%),
+    linear-gradient(to right, var(--color-plum-950), var(--color-slate-900));
+}
+
+/*
+ * The hero's grid sits on the hero's own dark scene, which is the same in
  * both themes -- so its dots must not follow the theme either, or they vanish
- * against the picture in one of the two.
+ * against it in one of the two.
  */
 @utility dot-grid-fixed {
   background-image: radial-gradient(circle at 2px 2px, #b6bacd 2px, transparent 2px);

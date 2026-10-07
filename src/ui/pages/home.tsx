@@ -17,6 +17,7 @@
  * start (src/lib/landing-demo.ts), not transcribed, so they cannot drift.
  */
 
+import { raw } from "hono/html"
 import { Layout } from "../layout"
 import type { PageUrl } from "../layout"
 import { Icon } from "../icon"
@@ -36,6 +37,8 @@ import efBlog from "../icons/ef-blog.svg"
 import { listLanguages } from "../../lib/language-meta"
 import { ETHEREUM_ORG_URL } from "../../lib/constants"
 import type { DemoKind, LandingDemo } from "../../lib/landing-demo"
+import type { HeroRelay } from "../../lib/hero-relay"
+import { HERO_GLOBE_ISLAND } from "../hero-globe"
 
 const CTA_PRIMARY =
   "inline-flex h-14 items-center gap-2 rounded-full bg-primary px-6 text-body font-bold text-primary-foreground no-underline transition-[filter] hover:brightness-110 hover:no-underline"
@@ -138,10 +141,12 @@ const WALLET_LIFT: Array<[string, number]> = [
 
 export const HomePage = ({
   demo,
+  relay,
   activeLang,
   url,
 }: {
   demo: LandingDemo
+  relay: HeroRelay
   activeLang?: string
   url?: PageUrl
 }) => {
@@ -158,24 +163,28 @@ export const HomePage = ({
       description="Community-reviewed Ethereum terminology in 24 languages, with an English style guide and a simple API."
       bare
       brand="hero"
+      island={HERO_GLOBE_ISLAND}
       activeLang={activeLang}
       url={url}
     >
       {/* ---------- Hero: frame 280:234, 1440x640 ---------- */}
-      <header class="relative overflow-hidden border-b border-border-subtle bg-slate-900">
+      <header class="hero-space relative overflow-hidden border-b border-border-subtle">
         {/*
-          The artwork sits at 40% over a fixed dark ground rather than having
-          that opacity baked into the file, so the hero reads identically in
-          both themes and the source PNG stays untouched.
+          The globe island (src/ui/hero-globe.ts) paints into this box once the
+          page has loaded and fades it in. Until then, and wherever WebGL2 is
+          missing, the header's own gradient is the hero. Below md the globe
+          sits behind the copy, so it is dimmed there.
         */}
-        <img
-          src="/img/ethglossary-hero.png"
-          alt=""
-          class="absolute inset-0 size-full object-cover object-right opacity-40"
-          width="1440"
-          height="640"
-          fetchpriority="high"
+        <div
+          data-globe="hero"
+          class="absolute inset-0 opacity-0 transition-opacity duration-1000 max-md:[&>canvas]:opacity-50"
+          data-lights="/img/earth-night-2016.webp"
+          data-relief="/img/earth-relief.webp"
+          aria-hidden="true"
         />
+        <script type="application/json" id="hero-globe-data">
+          {raw(JSON.stringify(relay).replace(/</g, "\\u003c"))}
+        </script>
         <div class="dot-grid-fixed absolute inset-0" aria-hidden="true" />
 
         {/* pt clears the nav, which floats over this section. */}
