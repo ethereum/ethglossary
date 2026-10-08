@@ -208,6 +208,10 @@ export function mountCommunity(host, data) {
   let fdpr = 1
   let tileW = 0
   let fade = 0
+  // Where the copy leaves too little room beside it (phones, and tablets
+  // whose copy runs nearly edge to edge), the scene sits behind it:
+  // conversations then run anywhere, drawn dim so they stay in the background.
+  let behind = false
   let off = 0
   let clock = 0
   let people = []
@@ -267,7 +271,10 @@ export function mountCommunity(host, data) {
     const b = host.getBoundingClientRect()
     W = b.width
     H = b.height
-    fade = W >= 768 ? copyRight(host, b.left) : W
+    // Beside the copy, the scene is dimmed under it; behind it, throughout.
+    const right = W >= 768 ? copyRight(host, b.left) : W
+    behind = W - right < 360
+    fade = behind ? W : right
     fdpr = Math.min(devicePixelRatio || 1, 2)
     gdpr = Math.min(devicePixelRatio || 1, 1.5)
     // One tile is wider than the view, so nobody is ever on screen twice.
@@ -332,18 +339,34 @@ export function mountCommunity(host, data) {
 
   const word = (p) => p.lang.words[data.terms[term]]
 
+  /** Where a bubble with this text would sit over this person, or null when they are off screen. */
+  function bubbleAt(p, text) {
+    const q = onScreen(p)
+    if (!q) return null
+    ctx.font = FONT
+    ctx.direction = p.lang.dir === "rtl" ? "rtl" : "ltr"
+    const bw = ctx.measureText(text).width + 20
+    const bh = 28
+    const x = Math.max(4, Math.min(W - bw - 4, q[0] - bw / 2))
+    const y = q[1] - bh - 14
+    return { q, x, y, bw, bh, box: [x, y, x + bw, y + bh] }
+  }
+
+  /** On screen and free. Beside the copy, conversations stay right of it. */
+  function canTalk(p) {
+    const q = onScreen(p)
+    return q && q[0] > (behind ? 40 : fade + 40) && q[0] < W - 60 && !busy(p) && word(p)
+  }
+
   function spawn() {
-    const lo = Math.max(fade + 40, 40)
-    const here = people.filter((p) => {
-      const q = onScreen(p)
-      return q && q[0] > lo && q[0] < W - 60 && !busy(p) && word(p)
-    })
+    const here = people.filter(canTalk)
     if (here.length < 2) return
     const a = pick(here)
     const ax = onScreen(a)[0]
     const near = here.filter((p) => {
       const dx = Math.abs(onScreen(p)[0] - ax)
-      return p !== a && p.lang !== a.lang && dx > 70 && dx < 460
+      // Close neighbours count too when only a handful of people fit on screen.
+      return p !== a && p.lang !== a.lang && dx > (behind ? 40 : 70) && dx < 460
     })
     if (!near.length) return
     const b = pick(near)
@@ -354,19 +377,14 @@ export function mountCommunity(host, data) {
   }
 
   function bubble(p, text, alpha, heard) {
-    const q = onScreen(p)
-    if (!q || alpha <= 0) return
+    if (alpha <= 0) return
+    const at = bubbleAt(p, text)
+    if (!at || !claim(placed, at.box)) return
+    const { q, x, y, bw, bh } = at
     const rtl = p.lang.dir === "rtl"
-    ctx.font = FONT
-    ctx.direction = rtl ? "rtl" : "ltr"
-    const bw = ctx.measureText(text).width + 20
-    const bh = 28
-    const x = Math.max(4, Math.min(W - bw - 4, q[0] - bw / 2))
-    const y = q[1] - bh - 14
-    if (!claim(placed, [x, y, x + bw, y + bh])) return
     const pop = 0.85 + 0.15 * Math.min(1, alpha * 3)
     ctx.save()
-    ctx.globalAlpha = alpha
+    ctx.globalAlpha = alpha * (behind ? 0.5 : 1)
     ctx.translate(q[0], q[1] - 6)
     ctx.scale(pop, pop)
     ctx.translate(-q[0], -(q[1] - 6))
@@ -436,8 +454,10 @@ export function mountCommunity(host, data) {
     ctx.setTransform(fdpr, 0, 0, fdpr, 0, 0)
     ctx.clearRect(0, 0, W, H)
     ctx.lineCap = "round"
+    ctx.globalAlpha = behind ? 0.5 : 1
     placed = []
     talks = talks.filter(drawTalk)
+    ctx.globalAlpha = 1
   }
 
   function step(dt) {
@@ -449,7 +469,8 @@ export function mountCommunity(host, data) {
     }
     if (clock > spawnAt && talks.length < MAX_TALKS) {
       spawn()
-      spawnAt = clock + 0.7 + Math.random() * 0.8
+      // A narrow view rarely holds a pair, so it tries again sooner.
+      spawnAt = clock + (behind ? 0.3 : 0.7) + Math.random() * 0.8
     }
     draw()
   }

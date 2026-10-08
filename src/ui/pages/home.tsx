@@ -168,14 +168,19 @@ export const HomePage = ({
       url={url}
     >
       {/* ---------- Hero: frame 280:234, 1440x640 ---------- */}
-      <header class="hero-space relative overflow-hidden border-b border-border-subtle">
+      <header class="relative overflow-hidden border-b border-border-subtle bg-linear-to-r from-plum-950 to-slate-900">
         {/*
           The community hall (src/ui/landing/community.js) paints into this
           box once the page has loaded and fades it in. Until then, and wherever
-          WebGL2 is missing, the header's own gradient is the hero. The island
+          WebGL2 is missing, the header's own gradient (with a violet bloom on
+          the right, clear of the copy) is the hero. The island
           dims the scene under the copy itself, and draws the site's dot grid
           behind the hall rather than over it, so there is no CSS overlay here.
         */}
+        <div
+          class="absolute inset-0 bg-radial-[at_75%_55%] from-violet-400/20 to-transparent to-40%"
+          aria-hidden="true"
+        />
         <div
           id="hero-scene"
           class="absolute inset-0 opacity-0 transition-opacity duration-1000"
@@ -191,8 +196,8 @@ export const HomePage = ({
             Fixed white/yellow rather than theme tokens: this copy always sits
             on the hero artwork, which is dark in both themes.
           */}
-          <h1 class="font-serif text-h1 font-bold text-white">
-            A shared language for <span class="block text-primary">localizing Ethereum</span>
+          <h1 class="max-w-4xl font-serif text-h1 font-bold text-balance text-white">
+            A shared language for <span class="text-primary">localizing Ethereum</span>
           </h1>
           <p class="max-w-3xl font-medium text-lede text-white">
             ETHGlossary provides community-reviewed Ethereum terminology. Ready to use in{" "}
@@ -303,7 +308,7 @@ export const HomePage = ({
                 data-lights="/img/earth-night-2016.webp"
                 data-relief="/img/earth-relief.webp"
                 data-day="/img/earth-day.webp"
-                class="absolute -inset-7 opacity-0 transition-opacity duration-1000 md:-inset-16"
+                class="absolute -inset-7 touch-pan-y opacity-0 transition-opacity duration-1000 md:-inset-16"
                 aria-hidden="true"
               />
             </div>

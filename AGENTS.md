@@ -374,7 +374,7 @@ their own languages. Both are WebGL2, in `src/ui/landing/`.
   only while the element is on screen and the tab is visible, and never under
   `prefers-reduced-motion` or Save-Data, which get one composed still frame.
   Without WebGL2 (or on a lost context) the canvases go and the header's
-  `hero-space` gradient is the hero. Device pixel ratio is capped at 1.5 for
+  own gradient is the hero. Device pixel ratio is capped at 1.5 for
   WebGL and 2 for text.
 - **Canvas text does not load fonts.** Call `needFont(word)` before a word is
   first drawn so its `unicode-range` subset is fetched, and draw in `FONT`

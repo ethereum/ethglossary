@@ -364,7 +364,10 @@ function start(host, data, imgs) {
     refresh()
   }
 
-  // ------------------------------------------------------------ drag (mouse only: touch scrolls the page)
+  // ------------------------------------------------------------ drag
+  // Touch spins the globe sideways only: the host's touch-pan-y (set in the
+  // markup, so it holds before the textures arrive) leaves vertical swipes to
+  // the page, which cancels the drag when it takes one over as a scroll.
 
   function onGlobe(e) {
     const b = host.getBoundingClientRect()
@@ -373,15 +376,14 @@ function start(host, data, imgs) {
     return dx * dx + dy * dy < globe.r * globe.r * 1.1
   }
   host.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "touch" || e.button !== 0 || !onGlobe(e)) return
+    if (e.button !== 0 || !onGlobe(e)) return
     drag = { x: e.clientX, y: e.clientY, t: performance.now() }
     host.setPointerCapture(e.pointerId)
     host.style.cursor = "grabbing"
   })
   host.addEventListener("pointermove", (e) => {
-    if (e.pointerType === "touch") return
     if (!drag) {
-      host.style.cursor = onGlobe(e) ? "grab" : ""
+      if (e.pointerType === "mouse") host.style.cursor = onGlobe(e) ? "grab" : ""
       return
     }
     const now = performance.now()
@@ -389,9 +391,11 @@ function start(host, data, imgs) {
     const dy = (e.clientY - drag.y) / globe.r
     const span = Math.max(0.016, (now - drag.t) / 1000)
     yaw += dx
-    tilt = clampTilt(tilt + dy)
     vel = dx / span - SPIN
-    tvel = dy / span
+    if (e.pointerType === "mouse") {
+      tilt = clampTilt(tilt + dy)
+      tvel = dy / span
+    }
     drag = { x: e.clientX, y: e.clientY, t: now }
     if (!anim?.running()) draw()
   })
