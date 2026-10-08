@@ -53,7 +53,7 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 │   └── term-template.json           # template for a new GlossaryTerm
 ├── scripts/
 │   ├── audit-glossary.mjs           # audit data vs v1 policy; outputs Markdown
-│   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js
+│   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js; the ?island loader
 │   ├── term-uid.mjs                 # mint / backfill / check the stable term uid
 │   ├── export-feedback.mjs          # maintainers: feedback as JSONL for review
 │   ├── resolve-feedback.mjs         # maintainers: mark suggestions/proposals accepted or declined
@@ -84,6 +84,7 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── context-types.ts         # the six votable translation slots; applicableContexts()
     │   ├── language-meta.ts         # endonyms, regions, script direction (viewer only)
     │   ├── landing-demo.ts          # the landing page's two live demos, built from the glossary once per process
+    │   ├── term-relay.ts            # the words the landing animations pass around: a city and terms per language
     │   └── sanitize.ts              # HTML allowlist for definitions
     ├── ui/                          # server-rendered hono/jsx viewer
     │   ├── app.css                  # Tailwind v4 source: @theme tokens + utilities
@@ -92,6 +93,11 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── icon.tsx                 # <Icon name> -- Lucide imports + custom art
     │   ├── icons/                   # custom .svg only (brand marks); Lucide comes from npm
     │   ├── islands.ts               # client scripts (search, language picker)
+    │   ├── landing/                 # the landing page's WebGL2 animations, browser modules bundled by ?island
+    │   │   ├── island.js            # entry: reads #relay-data, mounts both after load
+    │   │   ├── community.js         # hero: the line-art hall, its crowd and their conversations
+    │   │   ├── globe.js             # "What is ETHGlossary": the turning Earth and its arcs
+    │   │   └── gl.js                # shared: context/program setup, lifecycle guards, the arc, font loading
     │   ├── siwe.ts                  # Sign-In with Ethereum island (EIP-6963 + personal_sign)
     │   ├── feedback.ts              # translate-page island: votes, suggestions, flags
     │   ├── style-guide-feedback.tsx # style-guide feedback: definition thumb, Suggest changes, its island
@@ -251,10 +257,12 @@ Co-Authored-By: wackerow <54227730+wackerow@users.noreply.github.com>
 
 The human-facing site is server-rendered with `hono/jsx` under `src/ui/`,
 mounted by `src/routes/viewer.tsx`. Styling is **Tailwind v4**, compiled from
-`src/ui/app.css`. There is no client framework; interactivity is three
-vanilla-JS islands -- `src/ui/islands.ts` (term filtering), `src/ui/tooltip.ts`
-(click-to-explain popovers) and `src/ui/nav-drawer.ts` (the mobile menu).
-Every script the site ships totals about 2.5 KB gzipped.
+`src/ui/app.css`. There is no client framework; interactivity is small
+vanilla-JS islands inlined per page -- among them `src/ui/islands.ts` (term
+filtering), `src/ui/tooltip.ts` (click-to-explain popovers) and
+`src/ui/nav-drawer.ts` (the mobile menu), written as template-literal
+strings. The one exception is the landing page's animations (see below),
+which are real modules under `src/ui/landing/`.
 
 Rules that are easy to get wrong:
 
@@ -341,6 +349,50 @@ Rules that are easy to get wrong:
   community-submitted content will flow through the same components later.
 - **Slot counts vary.** Use `applicableContexts()` from
   `src/lib/context-types.ts`; never hardcode six. See `docs/context-types.md`.
+
+### The landing page's animations
+
+The hero is a line-art community hall and the "What is ETHGlossary" section
+holds a turning globe; in both, glossary terms travel between speakers in
+their own languages. Both are WebGL2, in `src/ui/landing/`.
+
+- **They are modules, bundled by `?island`.** `home.tsx` imports
+  `../landing/island.js?island`; the plugin in `scripts/build-server.mjs`
+  bundles that entry and its imports into one minified IIFE and hands it over
+  as a string, which the page inlines like any other island (about 11 KB
+  gzipped). `src/types.d.ts` declares `*?island`. `pnpm dev` rebuilds when any
+  of the modules change. New islands that outgrow a template literal can use
+  the same loader.
+- **Every word is the glossary's.** `src/lib/term-relay.ts` builds, once per
+  process, a city per language (Montreal gives French a second one) and each
+  language's bare form of a handful of terms; the page embeds it as
+  `#relay-data`. Never hardcode a translated word in the animations.
+- **Draw once, composite per frame.** The hall is rendered into a tiling
+  texture on resize, with alpha where the sky shows; a frame is the moving
+  sky plus one texture read. Keep anything static out of the per-frame pass.
+- **The guards are not optional.** `animate()` in `gl.js` runs at most 30 fps,
+  only while the element is on screen and the tab is visible, and never under
+  `prefers-reduced-motion` or Save-Data, which get one composed still frame.
+  Without WebGL2 (or on a lost context) the canvases go and the header's
+  `hero-space` gradient is the hero. Device pixel ratio is capped at 1.5 for
+  WebGL and 2 for text.
+- **Canvas text does not load fonts.** Call `needFont(word)` before a word is
+  first drawn so its `unicode-range` subset is fetched, and draw in `FONT`
+  (regular weight: the non-Latin subsets ship only in 400 and 700).
+- **The globe follows the theme**, crossfading to a daytime map in light mode;
+  the day texture is fetched only once light mode is in effect. Its canvas
+  overhangs the 302px slot (4rem a side from `md`, the slot's own margin
+  below) so the atmosphere fits without a sideways scroll on a phone.
+- **Textures are public domain, credit not required:** Natural Earth relief
+  and day maps (`public/img/earth-relief.webp`, `earth-day.webp`) and NASA's
+  Black Marble 2016 night lights (`earth-night-2016.webp`; NASA asks to be
+  acknowledged as the source and must not appear to endorse the site).
+  Anything added must be the same.
+- **`public/img/og.jpg` is a still of the globe,** 1200x630: the globe-hero
+  variant (branch `hero-globe`) rendered headless at 2x with the wordmark and
+  headline only. Its filename is stable on purpose, and `public/` is cached
+  as immutable, so a new card reaches crawlers that already fetched one only
+  as their caches expire.
 
 ### Viewer routes
 
