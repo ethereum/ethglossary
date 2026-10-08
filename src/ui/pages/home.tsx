@@ -261,7 +261,7 @@ export const HomePage = ({
           <div class="flex flex-col gap-8">
             <div class="flex items-start gap-8">
               <Bubble tone="text-rose" />
-              <h2 class="max-w-md font-serif text-h2 font-bold text-foreground-strong">
+              <h2 class="font-serif text-h2 font-bold text-foreground-strong">
                 Dictionary and a style guide
               </h2>
             </div>
@@ -383,7 +383,7 @@ export const HomePage = ({
       <section class="wrap relative py-12 md:py-16">
         <div class="mb-16 flex items-start gap-8">
           <Bubble tone="text-violet" />
-          <h2 class="max-w-md font-serif text-h2 font-bold text-foreground-strong">
+          <h2 class="font-serif text-h2 font-bold text-foreground-strong">
             How to get started
           </h2>
         </div>
