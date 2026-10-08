@@ -490,18 +490,6 @@
 }
 
 /*
- * The hero's grid sits on the hero's own dark scene, which is the same in
- * both themes -- so its dots must not follow the theme either, or they vanish
- * against it in one of the two.
- */
-@utility dot-grid-fixed {
-  background-image: radial-gradient(circle at 2px 2px, #b6bacd 2px, transparent 2px);
-  background-size: 20px 20px;
-  /* Half the flat-panel grid: over artwork the dots need far less presence. */
-  opacity: 0.125;
-}
-
-/*
  * States the three-state light guard once, so anything light-only can reuse
  * it instead of restating the media query and both data-theme stamps.
  */

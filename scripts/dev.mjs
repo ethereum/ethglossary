@@ -44,6 +44,7 @@ const ctx = await context({
   ...options,
   logLevel: "warning",
   plugins: [
+    ...options.plugins,
     {
       name: "restart-server",
       setup(build) {

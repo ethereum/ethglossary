@@ -1044,11 +1044,6 @@
     background-size: 20px 20px;
     opacity: 0.25;
   }
-  .dot-grid-fixed {
-    background-image: radial-gradient(circle at 2px 2px, #b6bacd 2px, transparent 2px);
-    background-size: 20px 20px;
-    opacity: 0.125;
-  }
   .from-background {
     --tw-gradient-from: var(--color-background);
     --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));

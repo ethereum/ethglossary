@@ -11,7 +11,7 @@ import { OpenAPIHono } from "@hono/zod-openapi"
 
 import { HomePage } from "../ui/pages/home"
 import { landingDemo } from "../lib/landing-demo"
-import { heroRelay } from "../lib/hero-relay"
+import { termRelay } from "../lib/term-relay"
 import { TranslatePage } from "../ui/pages/translate"
 import type { FeedbackMode, FeedbackState, TermListItem } from "../ui/pages/translate"
 import { ContextsPage } from "../ui/pages/contexts"
@@ -83,7 +83,7 @@ app.get("/favicon.svg", (c) => {
 // ---------------------------------------------------------------- pages
 
 app.get("/", async (c) => {
-  const [demo, relay] = await Promise.all([landingDemo(), heroRelay()])
+  const [demo, relay] = await Promise.all([landingDemo(), termRelay()])
   return c.html(<HomePage demo={demo} relay={relay} activeLang={navLang(c)} url={pageUrl(c)} />)
 })
 

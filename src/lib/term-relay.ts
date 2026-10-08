@@ -1,8 +1,9 @@
 /**
- * Data for the landing hero's globe: a city per language, and that
- * language's rendering of a handful of terms. The island in
- * src/ui/hero-globe.ts flies each term between cities, so every word on the
- * globe is the glossary's own entry rather than painted or invented text.
+ * The words the landing page's animations pass around: a city per language,
+ * and that language's rendering of a handful of terms. The globe
+ * (src/ui/landing/globe.js) flies each term between cities and the hero's
+ * community hall (src/ui/landing/community.js) between people, so every word
+ * on screen is the glossary's own entry rather than painted or invented text.
  *
  * A language is pinned to a city purely as a place to draw it. That is a
  * visual shorthand, not a claim about where a language belongs. Most get one;
@@ -23,7 +24,7 @@ export interface RelayCity {
   words: Record<string, string>
 }
 
-export interface HeroRelay {
+export interface TermRelay {
   terms: string[]
   cities: RelayCity[]
 }
@@ -69,15 +70,15 @@ const TERMS = [
   "node",
 ]
 
-let cached: Promise<HeroRelay> | null = null
+let cached: Promise<TermRelay> | null = null
 
 /** Computed once per process: the glossary is immutable while it runs. */
-export function heroRelay(): Promise<HeroRelay> {
+export function termRelay(): Promise<TermRelay> {
   if (!cached) cached = build()
   return cached
 }
 
-async function build(): Promise<HeroRelay> {
+async function build(): Promise<TermRelay> {
   const files = await Promise.all(SUPPORTED_LANGUAGES.map(loadTranslations))
   const cities: RelayCity[] = []
   for (const [lang, lat, lon] of CITIES) {

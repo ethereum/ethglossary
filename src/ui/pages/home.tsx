@@ -37,9 +37,8 @@ import efBlog from "../icons/ef-blog.svg"
 import { listLanguages } from "../../lib/language-meta"
 import { ETHEREUM_ORG_URL } from "../../lib/constants"
 import type { DemoKind, LandingDemo } from "../../lib/landing-demo"
-import type { HeroRelay } from "../../lib/hero-relay"
-import { HERO_GLOBE_ISLAND } from "../hero-globe"
-import { HERO_COMMUNITY_ISLAND } from "../hero-community"
+import type { TermRelay } from "../../lib/term-relay"
+import LANDING_ISLAND from "../landing/island.js?island"
 
 const CTA_PRIMARY =
   "inline-flex h-14 items-center gap-2 rounded-full bg-primary px-6 text-body font-bold text-primary-foreground no-underline transition-[filter] hover:brightness-110 hover:no-underline"
@@ -147,7 +146,7 @@ export const HomePage = ({
   url,
 }: {
   demo: LandingDemo
-  relay: HeroRelay
+  relay: TermRelay
   activeLang?: string
   url?: PageUrl
 }) => {
@@ -164,15 +163,15 @@ export const HomePage = ({
       description="Community-reviewed Ethereum terminology in 24 languages, with an English style guide and a simple API."
       bare
       brand="hero"
-      island={HERO_COMMUNITY_ISLAND + HERO_GLOBE_ISLAND}
+      island={LANDING_ISLAND}
       activeLang={activeLang}
       url={url}
     >
       {/* ---------- Hero: frame 280:234, 1440x640 ---------- */}
       <header class="hero-space relative overflow-hidden border-b border-border-subtle">
         {/*
-          The community island (src/ui/hero-community.ts) paints into this box
-          once the page has loaded and fades it in. Until then, and wherever
+          The community hall (src/ui/landing/community.js) paints into this
+          box once the page has loaded and fades it in. Until then, and wherever
           WebGL2 is missing, the header's own gradient is the hero. The island
           dims the scene under the copy itself, and draws the site's dot grid
           behind the hall rather than over it, so there is no CSS overlay here.
@@ -182,7 +181,7 @@ export const HomePage = ({
           class="absolute inset-0 opacity-0 transition-opacity duration-1000"
           aria-hidden="true"
         />
-        <script type="application/json" id="hero-globe-data">
+        <script type="application/json" id="relay-data">
           {raw(JSON.stringify(relay).replace(/</g, "\\u003c"))}
         </script>
 
@@ -292,7 +291,7 @@ export const HomePage = ({
               class="pointer-events-none absolute top-full -right-12 -z-10 hidden h-[251px] -translate-y-1/2 opacity-25 xl:block"
             />
             {/*
-              The globe (src/ui/hero-globe.ts, "inset") in the Figma's 302px
+              The globe (src/ui/landing/globe.js) in the Figma's 302px
               image slot, drawn an eighth larger than it, with a daytime Earth
               in light mode. The canvas overhangs the slot so the atmosphere
               has room: 4rem a side from md, and only as far as the slot's own
