@@ -17,6 +17,7 @@
  * start (src/lib/landing-demo.ts), not transcribed, so they cannot drift.
  */
 
+import { raw } from "hono/html"
 import { Layout } from "../layout"
 import type { PageUrl } from "../layout"
 import { Icon } from "../icon"
@@ -36,6 +37,8 @@ import efBlog from "../icons/ef-blog.svg"
 import { listLanguages } from "../../lib/language-meta"
 import { ETHEREUM_ORG_URL } from "../../lib/constants"
 import type { DemoKind, LandingDemo } from "../../lib/landing-demo"
+import type { TermRelay } from "../../lib/term-relay"
+import LANDING_ISLAND from "../landing/island.js?island"
 
 const CTA_PRIMARY =
   "inline-flex h-14 items-center gap-2 rounded-full bg-primary px-6 text-body font-bold text-primary-foreground no-underline transition-[filter] hover:brightness-110 hover:no-underline"
@@ -138,10 +141,12 @@ const WALLET_LIFT: Array<[string, number]> = [
 
 export const HomePage = ({
   demo,
+  relay,
   activeLang,
   url,
 }: {
   demo: LandingDemo
+  relay: TermRelay
   activeLang?: string
   url?: PageUrl
 }) => {
@@ -158,25 +163,32 @@ export const HomePage = ({
       description="Community-reviewed Ethereum terminology in 24 languages, with an English style guide and a simple API."
       bare
       brand="hero"
+      island={LANDING_ISLAND}
       activeLang={activeLang}
       url={url}
     >
       {/* ---------- Hero: frame 280:234, 1440x640 ---------- */}
-      <header class="relative overflow-hidden border-b border-border-subtle bg-slate-900">
+      <header class="relative overflow-hidden border-b border-border-subtle bg-linear-to-r from-plum-950 to-slate-900">
         {/*
-          The artwork sits at 40% over a fixed dark ground rather than having
-          that opacity baked into the file, so the hero reads identically in
-          both themes and the source PNG stays untouched.
+          The community hall (src/ui/landing/community.js) paints into this
+          box once the page has loaded and fades it in. Until then, and wherever
+          WebGL2 is missing, the header's own gradient (with a violet bloom on
+          the right, clear of the copy) is the hero. The island
+          dims the scene under the copy itself, and draws the site's dot grid
+          behind the hall rather than over it, so there is no CSS overlay here.
         */}
-        <img
-          src="/img/ethglossary-hero.png"
-          alt=""
-          class="absolute inset-0 size-full object-cover object-right opacity-40"
-          width="1440"
-          height="640"
-          fetchpriority="high"
+        <div
+          class="absolute inset-0 bg-radial-[at_75%_55%] from-violet-400/20 to-transparent to-40%"
+          aria-hidden="true"
         />
-        <div class="dot-grid-fixed absolute inset-0" aria-hidden="true" />
+        <div
+          id="hero-scene"
+          class="absolute inset-0 opacity-0 transition-opacity duration-1000"
+          aria-hidden="true"
+        />
+        <script type="application/json" id="relay-data">
+          {raw(JSON.stringify(relay).replace(/</g, "\\u003c"))}
+        </script>
 
         {/* pt clears the nav, which floats over this section. */}
         <div class="wrap relative flex flex-col justify-center gap-4 pt-32 pb-24 drop-shadow-hero md:min-h-[640px]">
@@ -184,8 +196,8 @@ export const HomePage = ({
             Fixed white/yellow rather than theme tokens: this copy always sits
             on the hero artwork, which is dark in both themes.
           */}
-          <h1 class="font-serif text-h1 font-bold text-white">
-            A shared language for <span class="block text-primary">localizing Ethereum</span>
+          <h1 class="max-w-4xl font-serif text-h1 font-bold text-balance text-white">
+            A shared language for <span class="text-primary">localizing Ethereum</span>
           </h1>
           <p class="max-w-3xl font-medium text-lede text-white">
             ETHGlossary provides community-reviewed Ethereum terminology. Ready to use in{" "}
@@ -284,28 +296,20 @@ export const HomePage = ({
               class="pointer-events-none absolute top-full -right-12 -z-10 hidden h-[251px] -translate-y-1/2 opacity-25 xl:block"
             />
             {/*
-              302px image inside two concentric rings: the first 1rem beyond
-              the image radius, the second another 0.5rem beyond that.
-              The rings sit outside the image box, so the container has to
-              leave room for them or the outer one clears a narrow viewport.
-              Figma 280:3263/280:3264: +21.5px then +7px on a 302px image.
+              The globe (src/ui/landing/globe.js) in the Figma's 302px
+              image slot, drawn an eighth larger than it, with a daytime Earth
+              in light mode. The canvas overhangs the slot so the atmosphere
+              has room: 4rem a side from md, and only as far as the slot's own
+              margin below that, so a phone never scrolls sideways.
             */}
-            <div class="relative grid aspect-square w-[calc(100%-3.5rem)] max-w-[302px] shrink-0 place-items-center">
-              <span
-                class="absolute -inset-5 rounded-full border border-accent"
+            <div class="relative aspect-square w-[calc(100%-3.5rem)] max-w-[302px] shrink-0">
+              <div
+                data-globe="inset"
+                data-lights="/img/earth-night-2016.webp"
+                data-relief="/img/earth-relief.webp"
+                data-day="/img/earth-day.webp"
+                class="absolute -inset-7 touch-pan-y opacity-0 transition-opacity duration-1000 md:-inset-16"
                 aria-hidden="true"
-              />
-              <span
-                class="absolute -inset-7 rounded-full border border-accent"
-                aria-hidden="true"
-              />
-              <img
-                src="/img/globe-dining-room.png"
-                alt=""
-                width="302"
-                height="302"
-                loading="lazy"
-                class="size-full rounded-full object-cover"
               />
             </div>
           </div>

@@ -11,6 +11,8 @@
 
 /* .tsx pages live beside this file; be explicit rather than rely on detection. */
 @source "./";
+/* Browser modules: no markup, so nothing in them is a class name. */
+@source not "./landing";
 
 /* ==========================================================================
    Theme -- dark is the base, matching the Figma frames.
@@ -475,18 +477,6 @@
   );
   background-size: 20px 20px;
   opacity: 0.25;
-}
-
-/*
- * The hero's grid sits on the artwork, which is the same fixed dark image in
- * both themes -- so its dots must not follow the theme either, or they vanish
- * against the picture in one of the two.
- */
-@utility dot-grid-fixed {
-  background-image: radial-gradient(circle at 2px 2px, #b6bacd 2px, transparent 2px);
-  background-size: 20px 20px;
-  /* Half the flat-panel grid: over artwork the dots need far less presence. */
-  opacity: 0.125;
 }
 
 /*
