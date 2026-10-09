@@ -17,10 +17,13 @@ RUN pnpm run check && pnpm run check:uids && pnpm run build
 # no node_modules; dist/server.js carries every dependency.
 FROM node:22-slim
 ARG GIT_SHA=""
+# Set only for PR preview images; makes every response noindex.
+ARG PREVIEW=""
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV GIT_SHA=$GIT_SHA
+ENV PREVIEW=$PREVIEW
 WORKDIR /app
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/public ./public
