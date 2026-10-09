@@ -77,5 +77,9 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             GIT_SHA=${{ env.BUILD_SHA }}
+          # PR images stay a single manifest (no attestation index), so
+          # preview-cleanup.yml deleting the tagged version leaves no
+          # untagged children behind.
+          provenance: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

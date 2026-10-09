@@ -1,0 +1,30 @@
+name: preview-cleanup
+
+# Deletes a closed PR's preview images (pr-<number>-<sha>, built by docker.yml)
+# from GHCR. The preview itself and its database are torn down by ArgoCD.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete pr-${{ github.event.pull_request.number }}-* image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG: orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Only versions whose every tag is this PR's: never main/release images.
+          gh api --paginate "$PKG/versions" --jq ".[]
+            | select(.metadata.container.tags | length > 0 and all(startswith(\"pr-$PR-\")))
+            | .id" |
+          while read -r id; do
+            echo "deleting version $id"
+            gh api -X DELETE "$PKG/versions/$id"
+          done
