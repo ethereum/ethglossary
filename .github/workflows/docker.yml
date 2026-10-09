@@ -6,17 +6,37 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
+  # PR deploy previews: same-repo PRs labeled `preview` get an image tagged
+  # pr-<number>-<head sha>, which ArgoCD deploys to
+  # https://ethglossary-<number>.previews.ethquokkaops.io. Deliberately not
+  # sha-<sha>: production's image updater rolls out the newest sha-* tag.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: docker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   docker:
+    # Fork PRs cannot push to GHCR, and their code must not run with our token.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'preview') &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    env:
+      # On PRs github.sha is the merge commit; build and tag the PR head instead.
+      BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -35,7 +55,13 @@ jobs:
         id: tags
         run: |
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          sha="sha-${GITHUB_SHA}"
+          sha="sha-${BUILD_SHA}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "tags=ghcr.io/${repo}:pr-${{ github.event.pull_request.number }}-${BUILD_SHA}" >> "$GITHUB_OUTPUT"
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "tags=ghcr.io/${repo}:${GITHUB_REF#refs/tags/},ghcr.io/${repo}:${sha}" >> "$GITHUB_OUTPUT"
           else
@@ -46,10 +72,14 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.tags.outputs.platforms }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ env.BUILD_SHA }}
+          # PR images stay a single manifest (no attestation index), so
+          # preview-cleanup.yml deleting the tagged version leaves no
+          # untagged children behind.
+          provenance: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
