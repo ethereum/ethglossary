@@ -24,10 +24,12 @@ concurrency:
 jobs:
   docker:
     # Fork PRs cannot push to GHCR, and their code must not run with our token.
+    # Adding some other label to a preview PR is not a reason to rebuild it.
     if: >-
       github.event_name != 'pull_request' ||
       (contains(github.event.pull_request.labels.*.name, 'preview') &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.action != 'labeled' || github.event.label.name == 'preview'))
     runs-on: ubuntu-latest
     env:
       # On PRs github.sha is the merge commit; build and tag the PR head instead.
@@ -77,9 +79,12 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             GIT_SHA=${{ env.BUILD_SHA }}
+            PREVIEW=${{ github.event_name == 'pull_request' && '1' || '' }}
           # PR images stay a single manifest (no attestation index), so
           # preview-cleanup.yml deleting the tagged version leaves no
           # untagged children behind.
           provenance: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # PRs read main's layer cache but never write to it, so preview
+          # builds cannot evict production's entries from the repo quota.
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}

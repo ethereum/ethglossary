@@ -23,7 +23,7 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **@hono/zod-openapi** `^1.3.x` -- routes defined with Zod; OpenAPI 3.1 auto-generated
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
 - **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
-- **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
+- **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`); PRs labeled `preview` get a deploy preview (see "Deploy previews")
 - **pnpm**, pinned once in the `packageManager` field of `package.json`; CI and the Dockerfile (through corepack) both read it from there
 - **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
@@ -42,7 +42,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── Dockerfile                       # production image: node dist/server.js
 ├── docker-compose.yml               # local Postgres for development (pnpm run db:up)
 ├── migrations/                      # Postgres schema, append-only .sql; see "Database"
-├── .github/workflows/docker.yml     # builds and publishes the image on push to main
+├── .github/workflows/docker.yml     # builds and publishes the image on push to main, and preview images for labeled PRs
+├── .github/workflows/preview-cleanup.yml # deletes a closed PR's preview images from GHCR
 ├── .github/workflows/ci.yml         # type check, uid check, bundle -- on every pull request
 ├── docs/
 │   ├── api-spec.md                  # internal planning spec
@@ -410,7 +411,7 @@ their own languages. Both are WebGL2, in `src/ui/landing/`.
 | `/contexts` | What prose / heading / tag / ui / code / plurals mean |
 | `/signin`, `/account` | Sign in (GitHub, Discord, Ethereum wallet) and the account page. `noIndex` |
 | `/auth/*` | OAuth start and callback per provider, SIWE nonce and verify, sign-out |
-| `/robots.txt`, `/sitemap.xml` | Crawler surface. Everything is allowed |
+| `/robots.txt`, `/sitemap.xml` | Crawler surface. Everything is allowed (previews answer `X-Robots-Tag: noindex` instead) |
 
 Rules that are not obvious from the table:
 
@@ -731,6 +732,32 @@ through `.github/workflows/docker.yml`, publishes it to
 five minutes. Verify with `scripts/verify-deploy.sh https://glossary.ethereum.org`
 once it lands. There is no wrangler in the repo and no Cloudflare
 deployment; do not add either back.
+
+### Deploy previews
+
+Add the `preview` label to a pull request and `docker.yml` builds the PR
+head as `ghcr.io/ethereum/ethglossary:pr-<number>-<sha>`; devops' ArgoCD
+deploys it to `https://ethglossary-<number>.previews.ethquokkaops.io` and
+comments the link on the PR. Every push to a labeled PR rebuilds it.
+
+- **Opt-in, same-repo only.** Fork PRs never build: their code must not run
+  with the repo's token. Adding any other label does not rebuild.
+- **Never `sha-*`.** Production's image updater rolls out the newest `sha-*`
+  tag, so a preview tagged that way would ship to production.
+- **Each preview has its own empty database**, created with the preview and
+  destroyed with it, so migrations and the startup indexer in a PR never
+  touch production's data. Nothing from production shows on a preview.
+- **No OAuth on previews.** The GitHub and Discord apps accept only
+  production's callback URL, so devops leave their variables (and
+  `ETH_RPC_URL`) out; the buttons do not render. Sign-In with Ethereum
+  works on any host.
+- **Never indexed.** Preview images are built with `PREVIEW=1`, which makes
+  `src/index.ts` send `X-Robots-Tag: noindex, nofollow` on every response.
+- **Cleanup is automatic.** Closing or merging the PR tears down the preview
+  and its database (ArgoCD), and `preview-cleanup.yml` deletes its images
+  from GHCR. PR builds read the Actions layer cache but never write to it.
+- Previews are amd64-only and carry no provenance attestation; production
+  images are multi-arch and do.
 
 ### Push to GitHub
 

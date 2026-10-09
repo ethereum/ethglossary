@@ -29,6 +29,20 @@ app.use("*", contextStorage())
 app.use("*", sessionMiddleware())
 
 /*
+ * A PR preview must never be indexed: only production is the glossary.
+ * PREVIEW is baked into preview images at build time (docker.yml), so a
+ * preview cannot forget it. A header rather than a robots.txt Disallow,
+ * because a crawler that may not fetch a page never sees its noindex, and
+ * a header covers the API, the docs and static files too.
+ */
+if (process.env.PREVIEW) {
+  app.use("*", async (c, next) => {
+    await next()
+    c.header("X-Robots-Tag", "noindex, nofollow")
+  })
+}
+
+/*
  * `/translations/` should not 404 when `/translations` works.
  *
  * Acts only on a response that already came back 404, so it costs nothing on
