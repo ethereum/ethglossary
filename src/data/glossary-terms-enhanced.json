@@ -12949,6 +12949,309 @@
       "casing": "fixed",
       "aliases": [],
       "translation_note": "Major consumer-tier brand or project with officially adopted or widely established native-script forms."
+    },
+    "token approval": {
+      "id": "token-approval",
+      "uid": "inq0rqxh1e",
+      "term": "token approval",
+      "category": "tokens",
+      "definition": "Permission a wallet gives another address, usually an app's smart contract, to move a specific token on its behalf. It stays in force until it is used up or revoked, even after you stop using the app that asked for it. For NFTs, one approval can cover every token in a collection.",
+      "references": [
+        {
+          "label": "Revoking token access",
+          "url": "https://ethereum.org/guides/how-to-revoke-token-access/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "token approval"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [
+        {
+          "term": "approval",
+          "status": "accepted",
+          "note": "Fine once the token context is clear."
+        }
+      ],
+      "note": "The noun for what approve creates. The amount granted is the allowance; the address that receives it is the spender.",
+      "translation_note": "Pick one rendering and use it everywhere, interface and help content alike. Alternating between words for 'approval', 'access' and 'permission' makes users think these are different things.",
+      "term_role": "concept"
+    },
+    "revoke": {
+      "id": "revoke",
+      "uid": "qluxpztxmw",
+      "term": "revoke",
+      "category": "tokens",
+      "definition": "To cancel a token approval with an onchain transaction that sets the allowance back to zero, so the spender can no longer move your tokens. Revoking costs gas and does not recover tokens that were already taken.",
+      "references": [
+        {
+          "label": "Revoking token access",
+          "url": "https://ethereum.org/guides/how-to-revoke-token-access/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "revoke"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [],
+      "note": "Noun: revocation. 'Revoke access' and 'revoke an approval' mean the same action.",
+      "translation_note": "Use the verb for cancelling a granted right, not one meaning to delete or to undo a transaction.",
+      "term_role": "concept"
+    },
+    "spender": {
+      "id": "spender",
+      "uid": "z72baobi41",
+      "term": "spender",
+      "category": "tokens",
+      "definition": "The address a token approval is granted to, which may then transfer the approved tokens out of your wallet. It is usually an app's smart contract, but it can be any address, including a scammer's.",
+      "references": [
+        {
+          "label": "Revoking token access",
+          "url": "https://ethereum.org/guides/how-to-revoke-token-access/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "spender"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [],
+      "translation_note": "The authorized party in an approval, not a person who spends money in general. A descriptive phrase such as 'approved address' is better than a word for a shopper or consumer.",
+      "term_role": "concept"
+    },
+    "unlimited approval": {
+      "id": "unlimited-approval",
+      "uid": "q3ysfqxpfa",
+      "term": "unlimited approval",
+      "category": "tokens",
+      "definition": "A token approval for the largest possible amount, so the spender can move any quantity of that token, now or later. Apps request it to spare users repeat approvals, but it exposes the whole balance if the spender is compromised.",
+      "references": [
+        {
+          "label": "Revoking token access",
+          "url": "https://ethereum.org/guides/how-to-revoke-token-access/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "unlimited approval"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [
+        {
+          "term": "infinite approval",
+          "status": "accepted"
+        }
+      ],
+      "term_role": "concept"
+    },
+    "permit signature": {
+      "id": "permit-signature",
+      "uid": "jhp61re286",
+      "term": "permit signature",
+      "category": "tokens",
+      "definition": "A signed offchain message, defined in EIP-2612, that grants a token approval without a separate approval transaction. Signing one costs no gas, but it is as consequential as approving: whoever holds the signature can submit it and gain the allowance.",
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "permit signature"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [
+        {
+          "term": "permit",
+          "status": "accepted",
+          "note": "The ERC-20 function name in tokens that support EIP-2612."
+        }
+      ],
+      "translation_note": "'permit' as the function name stays in Latin script; translate the concept in prose.",
+      "term_role": "concept"
+    },
+    "Permit2": {
+      "id": "permit2",
+      "uid": "uhccq10nld",
+      "term": "Permit2",
+      "category": "tokens",
+      "definition": "A smart contract from Uniswap Labs that manages token approvals for many apps at once. You approve Permit2 once per token, and apps then request access through signed Permit2 messages that can carry an amount and an expiry date.",
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "Permit2"
+      },
+      "script_rule": "keep_latin",
+      "casing": "fixed",
+      "aliases": [],
+      "avoid": [
+        "Permit 2",
+        "permit2",
+        "PERMIT2"
+      ],
+      "note": "Contract name, shown as-is in wallet prompts, so it stays in Latin script.",
+      "term_role": "brand-or-project"
+    },
+    "wallet drainer": {
+      "id": "wallet-drainer",
+      "uid": "l42qgi3iam",
+      "term": "wallet drainer",
+      "category": "general",
+      "definition": "Malicious code built to empty a victim's wallet, usually by tricking them into signing an approval, permit signature or transaction on a fake site. Drainers are often sold as ready-made kits to other scammers.",
+      "references": [
+        {
+          "label": "Ethereum security and scam prevention",
+          "url": "https://ethereum.org/security/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "wallet drainer"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [
+        {
+          "term": "drainer",
+          "status": "accepted"
+        }
+      ],
+      "term_role": "concept"
+    },
+    "phishing": {
+      "id": "phishing",
+      "uid": "dkeix5htlu",
+      "term": "phishing",
+      "category": "general",
+      "definition": "A scam that impersonates a trusted site, app, support agent or person to trick you into revealing your seed phrase or signing something that hands over your assets. In Ethereum it usually ends in a malicious approval or signature rather than a stolen password.",
+      "references": [
+        {
+          "label": "Ethereum security and scam prevention",
+          "url": "https://ethereum.org/security/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "phishing"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [],
+      "term_role": "concept"
+    },
+    "blind signing": {
+      "id": "blind-signing",
+      "uid": "ma9uevelta",
+      "term": "blind signing",
+      "category": "transactions",
+      "definition": "Signing a transaction or message whose contents your wallet cannot show in readable form, so you approve it without knowing what it does. Some hardware wallets require it for smart contract interactions, and scammers rely on it.",
+      "references": [
+        {
+          "label": "Ethereum security and scam prevention",
+          "url": "https://ethereum.org/security/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "blind signing"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [],
+      "term_role": "concept"
+    },
+    "address poisoning": {
+      "id": "address-poisoning",
+      "uid": "vg5flgbu9u",
+      "term": "address poisoning",
+      "category": "general",
+      "definition": "A scam that sends you tiny or zero-value transfers from an address made to look like one you use, so it shows up in your transaction history. The attacker hopes you will later copy the lookalike address and send funds to it.",
+      "references": [
+        {
+          "label": "Ethereum security and scam prevention",
+          "url": "https://ethereum.org/security/"
+        }
+      ],
+      "has_tooltip": false,
+      "in_glossary": false,
+      "content_occurrences": 0,
+      "content_files": 0,
+      "intl_keys": 0,
+      "sources": [
+        "manual"
+      ],
+      "forms": {
+        "base": "address poisoning"
+      },
+      "script_rule": "translate",
+      "casing": "standard",
+      "aliases": [],
+      "translation_note": "'Poisoning' refers to contaminating your transaction history, not to toxins.",
+      "term_role": "concept"
     }
   },
   "term_families": {
