@@ -184,7 +184,9 @@
   --text-label-sm--line-height: 1.375rem;
 
   /* Smallest text in the design -- 12/20 */
-  --text-tiny: 0.75rem;
+  /* 14px is the floor. Nothing on the site sets type smaller than this,
+     so the smallest step is one size below body, not two. */
+  --text-tiny: 0.875rem;
   --text-tiny--line-height: 1.25rem;
 
   /* --- Layout ----------------------------------------------------------- */
