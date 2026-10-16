@@ -38,6 +38,12 @@ export function slotDigest(entry: TranslationEntry): {
   hashes: Record<string, string>
   values: Record<string, string>
 } {
+  // Entries are the cached objects loadTranslations() hands out and the
+  // bundled data never changes in-process, so a digest per object identity
+  // is computed once. The term list and the account page call this for
+  // every entry of a language on every view.
+  const hit = digests.get(entry)
+  if (hit) return hit
   const hashes: Record<string, string> = {}
   const values: Record<string, string> = {}
   for (const context of applicableContexts(entry)) {
@@ -46,7 +52,26 @@ export function slotDigest(entry: TranslationEntry): {
     values[context] = value
     hashes[context] = sha256Hex32(value)
   }
-  return { hashes, values }
+  const digest = { hashes, values }
+  digests.set(entry, digest)
+  return digest
+}
+const digests = new WeakMap<TranslationEntry, { hashes: Record<string, string>; values: Record<string, string> }>()
+
+/**
+ * The English fields a reader can vote on, each hashed on its own so a vote
+ * on the definition survives an edit to the note. Only the definition today.
+ */
+export type FieldId = "definition"
+
+export function fieldValue(term: GlossaryTerm, field: FieldId): string | null {
+  if (field === "definition") return term.definition?.trim() ? term.definition : null
+  return null
+}
+
+export function fieldHash(term: GlossaryTerm, field: FieldId): string | null {
+  const value = fieldValue(term, field)
+  return value === null ? null : sha256Hex32(value)
 }
 
 /**

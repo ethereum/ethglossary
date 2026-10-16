@@ -17,6 +17,9 @@ import type { Sql } from "./db/client"
 import { migrate, MigrationFilesError } from "./db/migrate"
 import { describeBuild, runIndexer } from "./lib/indexer"
 import { authConfig } from "./auth/config"
+import { setCssVersion } from "./lib/assets"
+import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
 
 const port = Number(process.env.PORT ?? 8787)
 // Loopback by default so a laptop is not listening on every interface; the
@@ -24,9 +27,10 @@ const port = Number(process.env.PORT ?? 8787)
 const hostname = process.env.HOST ?? "127.0.0.1"
 
 /*
- * Static files. Fonts and images are content that changes only with a new
- * deploy and can be cached for a long time; the stylesheet keeps its name
- * across edits, so it gets an hour and revalidation.
+ * Static files. Everything under public/ changes only with a deploy, and the
+ * one file whose name stays the same across edits, the stylesheet, is linked
+ * with a hash of its content in the query string. So all of it can be cached
+ * for a year as immutable: a new deploy is a new URL.
  */
 const staticWithCache = (cacheControl: string) =>
   serveStatic({
@@ -34,9 +38,44 @@ const staticWithCache = (cacheControl: string) =>
     onFound: (_path, c) => c.header("Cache-Control", cacheControl),
   })
 
-app.use("/assets/*", staticWithCache("public, max-age=3600, must-revalidate"))
+app.use("/assets/*", staticWithCache("public, max-age=31536000, immutable"))
 app.use("/fonts/*", staticWithCache("public, max-age=2592000, immutable"))
 app.use("/img/*", staticWithCache("public, max-age=2592000"))
+
+/*
+ * The stylesheet's version is the first 16 hex of its SHA-256. In production
+ * the file is part of the image, so hash it once. In development it is
+ * rebuilt in place by `pnpm run build:css` without a server restart, so
+ * re-hash whenever its mtime moves; a stat per page render is nothing.
+ */
+const CSS_PATH = "./public/assets/app.css"
+const hashCss = (): string | null => {
+  try {
+    return createHash("sha256").update(readFileSync(CSS_PATH)).digest("hex").slice(0, 16)
+  } catch {
+    return null
+  }
+}
+if (process.env.NODE_ENV === "production") {
+  const once = hashCss()
+  setCssVersion(() => once)
+} else {
+  let seen = -1
+  let version: string | null = null
+  setCssVersion(() => {
+    let mtime = -1
+    try {
+      mtime = statSync(CSS_PATH).mtimeMs
+    } catch {
+      return null
+    }
+    if (mtime !== seen) {
+      seen = mtime
+      version = hashCss()
+    }
+    return version
+  })
+}
 
 /** Liveness and readiness probe. Always uncached, never logged as content. */
 app.get("/healthz", (c) => {

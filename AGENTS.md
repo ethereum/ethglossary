@@ -23,7 +23,7 @@ Live deployment: `https://glossary.ethereum.org`. The repo is `github.com/ethere
 - **@hono/zod-openapi** `^1.3.x` -- routes defined with Zod; OpenAPI 3.1 auto-generated
 - **@scalar/hono-api-reference** -- interactive docs at `/docs`
 - **Node 22** -- `src/server.ts` on `@hono/node-server`, bundled into one file by esbuild (`scripts/build-server.mjs`). The same program runs in `pnpm dev` and in the container
-- **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`)
+- **Container image** built by `.github/workflows/docker.yml` on every push to `main` and rolled out on EF infrastructure by devops (`Dockerfile`); PRs labeled `preview` get a deploy preview (see "Deploy previews")
 - **pnpm**, pinned once in the `packageManager` field of `package.json`; CI and the Dockerfile (through corepack) both read it from there
 - **TypeScript 5.x**, ESM; esbuild bundles the server, Tailwind compiles the stylesheet
 
@@ -42,7 +42,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 ├── Dockerfile                       # production image: node dist/server.js
 ├── docker-compose.yml               # local Postgres for development (pnpm run db:up)
 ├── migrations/                      # Postgres schema, append-only .sql; see "Database"
-├── .github/workflows/docker.yml     # builds and publishes the image on push to main
+├── .github/workflows/docker.yml     # builds and publishes the image on push to main, and preview images for labeled PRs
+├── .github/workflows/preview-cleanup.yml # deletes a closed PR's preview images from GHCR
 ├── .github/workflows/ci.yml         # type check, uid check, bundle -- on every pull request
 ├── docs/
 │   ├── api-spec.md                  # internal planning spec
@@ -53,8 +54,11 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
 │   └── term-template.json           # template for a new GlossaryTerm
 ├── scripts/
 │   ├── audit-glossary.mjs           # audit data vs v1 policy; outputs Markdown
-│   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js
+│   ├── build-server.mjs             # esbuild: src/server.ts -> dist/server.js; the ?island loader
 │   ├── term-uid.mjs                 # mint / backfill / check the stable term uid
+│   ├── export-feedback.mjs          # maintainers: feedback as JSONL for review
+│   ├── resolve-feedback.mjs         # maintainers: mark suggestions/proposals accepted or declined
+│   ├── remove-user.mjs              # maintainers: tombstone, ban, optionally purge an account
 │   ├── dev.mjs                      # esbuild watch + node --watch, loads .env.local
 │   └── verify-deploy.sh             # smoke test for a running deploy
 └── src/
@@ -63,7 +67,10 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     ├── db/
     │   ├── client.ts                # the postgres pool; getDb() is null without DATABASE_URL
     │   └── migrate.ts               # applies migrations/*.sql at startup under an advisory lock
-    ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe
+    ├── auth/                        # sign-in: config, sessions, challenges, users, oauth, siwe, ratelimit
+    ├── feedback/
+    │   ├── store.ts                 # votes, suggestions, proposals; progress + history reads
+    │   └── profile.ts               # the account page's view: per-language progress, all of a person's feedback
     ├── llms.txt                     # served at /llms.txt
     ├── data/
     │   ├── glossary-terms-enhanced.json   # master English term data (532 terms)
@@ -77,6 +84,8 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── indexer.ts               # startup: records what a deploy changed (term_changes)
     │   ├── context-types.ts         # the six votable translation slots; applicableContexts()
     │   ├── language-meta.ts         # endonyms, regions, script direction (viewer only)
+    │   ├── landing-demo.ts          # the landing page's two live demos, built from the glossary once per process
+    │   ├── term-relay.ts            # the words the landing animations pass around: a city and terms per language
     │   └── sanitize.ts              # HTML allowlist for definitions
     ├── ui/                          # server-rendered hono/jsx viewer
     │   ├── app.css                  # Tailwind v4 source: @theme tokens + utilities
@@ -85,10 +94,25 @@ Auto-generated OpenAPI from the same Zod schemas used for runtime validation is 
     │   ├── icon.tsx                 # <Icon name> -- Lucide imports + custom art
     │   ├── icons/                   # custom .svg only (brand marks); Lucide comes from npm
     │   ├── islands.ts               # client scripts (search, language picker)
+    │   ├── landing/                 # the landing page's WebGL2 animations, browser modules bundled by ?island
+    │   │   ├── island.js            # entry: reads #relay-data, mounts both after load
+    │   │   ├── community.js         # hero: the line-art hall, its crowd and their conversations
+    │   │   ├── globe.js             # "What is ETHGlossary": the turning Earth and its arcs
+    │   │   └── gl.js                # shared: context/program setup, lifecycle guards, the arc, font loading
     │   ├── siwe.ts                  # Sign-In with Ethereum island (EIP-6963 + personal_sign)
+    │   ├── feedback.ts              # translate-page island: votes, suggestions, flags
+    │   ├── style-guide-feedback.tsx # style-guide feedback: definition thumb, Suggest changes, its island
+    │   ├── withdraw.tsx             # confirm dialog, tick boxes, select-all; shared by three pages
+    │   ├── feedback-shared.ts       # control classes + the island prelude (say/call) every island pastes in
+    │   ├── feedback-labels.ts       # how a person's own feedback reads back (kinds, plurals)
+    │   ├── gate.ts                  # off / signin / live: the attributes that make an inert control explain itself
+    │   ├── term-meta.ts             # what casing, script_rule and category values mean, in a sentence
+    │   ├── account-menu.ts          # nav account <details>: close on outside click / Escape
+    │   ├── account-island.ts        # account page: re-submit, typed delete confirmation
+    │   ├── feedback.ts              # votes / suggestions / proposals island for the translate view
     │   └── pages/                   # home, translate, contexts, languages, style-guide, signin, account
-    ├── schemas/                     # Zod schemas (common, style-guide, translations, filter)
-    └── routes/                      # info, style-guide, translations, filter, schema, viewer, auth
+    ├── schemas/                     # Zod schemas (common, style-guide, translations, filter, feedback)
+    └── routes/                      # info, style-guide, translations, filter, schema, viewer, auth, feedback
 ```
 
 All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scalar), `/openapi.json`, `/llms.txt`.
@@ -106,6 +130,13 @@ All API endpoints live under `/api/v1/`. Root paths: `/` (viewer), `/docs` (Scal
 | GET    | `/api/v1/translations/{lang}/{termId}`   | Single term translation plus English source              |
 | POST   | `/api/v1/filter`                         | Submit text (max 1MB), receive matching terms            |
 | GET    | `/api/v1/schema`                         | Raw JSON Schema for the glossary data                    |
+| PUT    | `/api/v1/feedback/translations/{lang}/{termId}/votes` | Vote on translation slots. Session cookie. |
+| POST   | `/api/v1/feedback/translations/{lang}/{termId}/suggestions` | Suggest a different translation. Session cookie. |
+| POST   | `/api/v1/feedback/proposals`             | New term, redundancy/split flag, metadata change. Session cookie. |
+| DELETE | `/api/v1/feedback/{suggestions,proposals}/{id}` | Withdraw your own. Session cookie.          |
+| PUT    | `/api/v1/feedback/style-guide/{termId}/votes` | Vote on the English definition. Session cookie. |
+| POST   | `/api/v1/feedback/proposals/batch`       | Several proposals in one transaction (what Suggest changes sends). |
+| POST   | `/api/v1/feedback/{suggestions,proposals}/{id}/reopen` | Re-submit a withdrawn item while its subject is unchanged. |
 | GET    | `/llms.txt`                              | LLM-friendly description                                 |
 | GET    | `/openapi.json`                          | Auto-generated OpenAPI 3.1 spec                          |
 | GET    | `/docs`                                  | Scalar interactive API docs                              |
@@ -227,10 +258,12 @@ Co-Authored-By: wackerow <54227730+wackerow@users.noreply.github.com>
 
 The human-facing site is server-rendered with `hono/jsx` under `src/ui/`,
 mounted by `src/routes/viewer.tsx`. Styling is **Tailwind v4**, compiled from
-`src/ui/app.css`. There is no client framework; interactivity is three
-vanilla-JS islands -- `src/ui/islands.ts` (term filtering), `src/ui/tooltip.ts`
-(click-to-explain popovers) and `src/ui/nav-drawer.ts` (the mobile menu).
-Every script the site ships totals about 2.5 KB gzipped.
+`src/ui/app.css`. There is no client framework; interactivity is small
+vanilla-JS islands inlined per page -- among them `src/ui/islands.ts` (term
+filtering), `src/ui/tooltip.ts` (click-to-explain popovers) and
+`src/ui/nav-drawer.ts` (the mobile menu), written as template-literal
+strings. The one exception is the landing page's animations (see below),
+which are real modules under `src/ui/landing/`.
 
 Rules that are easy to get wrong:
 
@@ -268,6 +301,11 @@ Rules that are easy to get wrong:
 - **URLs to Discord, GitHub, X, Farcaster or ethereum.org come from
   `src/lib/constants.ts`.** Never inline them. ETHGlossary has no social
   accounts of its own -- X and Farcaster point at ethereum.org's.
+- **The stylesheet link carries a content hash** (`cssHref()` in
+  `src/lib/assets.ts`, fed by `src/server.ts`), and everything under
+  `public/` is cached for a year as immutable. A deploy is a new URL, so a
+  returning visitor never sees new markup with the old stylesheet. Never
+  link `/assets/app.css` bare.
 - **Never hardcode the site's own origin.** Canonical links, `og:*` URLs,
   `robots.txt`, `sitemap.xml` and the OpenAPI `servers` entry all take it
   from the request through `requestOrigin()` in `src/lib/request-origin.ts`,
@@ -313,6 +351,50 @@ Rules that are easy to get wrong:
 - **Slot counts vary.** Use `applicableContexts()` from
   `src/lib/context-types.ts`; never hardcode six. See `docs/context-types.md`.
 
+### The landing page's animations
+
+The hero is a line-art community hall and the "What is ETHGlossary" section
+holds a turning globe; in both, glossary terms travel between speakers in
+their own languages. Both are WebGL2, in `src/ui/landing/`.
+
+- **They are modules, bundled by `?island`.** `home.tsx` imports
+  `../landing/island.js?island`; the plugin in `scripts/build-server.mjs`
+  bundles that entry and its imports into one minified IIFE and hands it over
+  as a string, which the page inlines like any other island (about 11 KB
+  gzipped). `src/types.d.ts` declares `*?island`. `pnpm dev` rebuilds when any
+  of the modules change. New islands that outgrow a template literal can use
+  the same loader.
+- **Every word is the glossary's.** `src/lib/term-relay.ts` builds, once per
+  process, a city per language (Montreal gives French a second one) and each
+  language's bare form of a handful of terms; the page embeds it as
+  `#relay-data`. Never hardcode a translated word in the animations.
+- **Draw once, composite per frame.** The hall is rendered into a tiling
+  texture on resize, with alpha where the sky shows; a frame is the moving
+  sky plus one texture read. Keep anything static out of the per-frame pass.
+- **The guards are not optional.** `animate()` in `gl.js` runs at most 30 fps,
+  only while the element is on screen and the tab is visible, and never under
+  `prefers-reduced-motion` or Save-Data, which get one composed still frame.
+  Without WebGL2 (or on a lost context) the canvases go and the header's
+  own gradient is the hero. Device pixel ratio is capped at 1.5 for
+  WebGL and 2 for text.
+- **Canvas text does not load fonts.** Call `needFont(word)` before a word is
+  first drawn so its `unicode-range` subset is fetched, and draw in `FONT`
+  (regular weight: the non-Latin subsets ship only in 400 and 700).
+- **The globe follows the theme**, crossfading to a daytime map in light mode;
+  the day texture is fetched only once light mode is in effect. Its canvas
+  overhangs the 302px slot (4rem a side from `md`, the slot's own margin
+  below) so the atmosphere fits without a sideways scroll on a phone.
+- **Textures are public domain, credit not required:** Natural Earth relief
+  and day maps (`public/img/earth-relief.webp`, `earth-day.webp`) and NASA's
+  Black Marble 2016 night lights (`earth-night-2016.webp`; NASA asks to be
+  acknowledged as the source and must not appear to endorse the site).
+  Anything added must be the same.
+- **`public/img/og.jpg` is a still of the globe,** 1200x630: the globe-hero
+  variant (branch `hero-globe`) rendered headless at 2x with the wordmark and
+  headline only. Its filename is stable on purpose, and `public/` is cached
+  as immutable, so a new card reaches crawlers that already fetched one only
+  as their caches expire.
+
 ### Viewer routes
 
 | Route | What it is |
@@ -324,12 +406,12 @@ Rules that are easy to get wrong:
 | `/translations/all` | All languages at once. A term picker; nothing here is votable |
 | `/translations/all/:termId` | One term across 24 languages x every applicable context |
 | `/translations/:lang` | One language: the contributor view |
-| `/translations/:lang/:termId` | One term in one language, with the vote controls |
+| `/translations/:lang/:termId` | One term in one language: vote controls, suggestion form, flags, your open feedback, Versions rail |
 | `/translations/change` | Clears the stored language and returns to the picker |
 | `/contexts` | What prose / heading / tag / ui / code / plurals mean |
 | `/signin`, `/account` | Sign in (GitHub, Discord, Ethereum wallet) and the account page. `noIndex` |
 | `/auth/*` | OAuth start and callback per provider, SIWE nonce and verify, sign-out |
-| `/robots.txt`, `/sitemap.xml` | Crawler surface. Everything is allowed |
+| `/robots.txt`, `/sitemap.xml` | Crawler surface. Everything is allowed (previews answer `X-Robots-Tag: noindex` instead) |
 
 Rules that are not obvious from the table:
 
@@ -465,11 +547,63 @@ routes in `src/routes/auth.tsx`, the pages in `src/ui/pages/signin.tsx` and
   `*`**, and the sub-app is mounted last in `src/index.ts`: a sub-app's
   wildcard middleware and error handler also apply to routes registered
   after its mount point.
-- **Nothing is visible yet.** `ACCOUNTS_ENABLED` in `src/lib/constants.ts`
-  is false: the nav shows the same inert "coming soon" button it always
-  did, and votes and suggestions stay disabled. `/signin` and `/account`
-  answer by URL so the flows can be verified in production. The flag flips
-  in the feedback PR, and the whole surface appears at once.
+- **`ACCOUNTS_ENABLED`** in `src/lib/constants.ts` is the one switch for
+  the whole visitor-facing surface: the nav's sign-in link and every vote,
+  suggestion and proposal control. Off, the site is the read-only glossary
+  with inert "coming soon" controls, whatever the database says.
+
+## Community feedback
+
+Signed-in readers can vote on each translation slot, suggest a different
+translation, propose a new term, flag a term as redundant or in need of a
+split, and on the style guide vote on a definition and suggest changes to a
+term's English metadata. All of it is **advisory**: it lands in the database and is read by
+maintainers with the scripts below; nothing a reader submits changes what
+the site or the API serves. The write API is `src/routes/feedback.ts`, the
+store `src/feedback/store.ts`, the page wiring in `src/routes/viewer.tsx`
+and `src/ui/pages/translate.tsx`, the browser side `src/ui/feedback.ts`.
+
+- **Every write is anchored to a content hash.** The page renders
+  `data-hash` on each slot row (and `data-term-hash` for the English entry)
+  and the client sends it back; the server recomputes it from the bundled
+  glossary and answers **409** on a mismatch. A vote can never land on a
+  value the reviewer did not see. `slot_versions` / `term_versions` rows are
+  created lazily on the first write against a value.
+- **Three page modes**, decided per request in `viewer.tsx`: `off` (flag
+  off or no database: inert controls, dashes for counts), `signin`
+  (database, no session: real counts, every control opens a "Sign in"
+  popover that returns to the page), `live` (signed in: the island wires
+  the controls to the API). The island binds only in `live`.
+- **Visibility:** up/down counts are public. A reader sees only their own
+  suggestions and proposals: the ones about a term under its form, all of
+  them on `/account`. No name is ever shown to another visitor.
+- **The style guide has feedback too.** `/style-guide/:termId` carries a
+  thumb on the definition (`field_versions` / `field_votes`, migration
+  0004, hashed per field so a note edit does not reset definition votes)
+  and "Suggest changes", a form over every reviewable field (definition,
+  note, aliases, references, avoid list, casing, category, script rule) that
+  sends one metadata proposal per field that changed, in one transaction.
+  `src/ui/style-guide-feedback.tsx`.
+- **Withdrawing keeps the row.** Status `withdrawn` (migration 0003), never
+  a DELETE: the author still sees it, the export's default `--status open`
+  skips it, and suggesting the same value again reopens the same row. The
+  confirm dialog and the account page's select-all are `src/ui/withdraw.tsx`.
+- **Progress marks** on `/translations/:lang` are derived, never stored:
+  the reader's votes and suggestions (`coveredSlots`) against the hashes of
+  what is live (`slotDigest`). A slot that changes in a deploy drops the
+  term back to partial or none on its own.
+- **The Versions rail** renders `term_changes` for the term in this
+  language plus the English entry, newest first, from the startup indexer.
+- **Limits:** per-person, in memory per replica, per hour: 600 votes, 60
+  suggestions, 20 proposals. JSON only, same-origin only (the write API has
+  no CORS headers), 16 KB body cap, and `cookieAuth` in `/openapi.json`.
+- **Maintainer scripts** need a `DATABASE_URL` (the Warpgate string):
+  `scripts/export-feedback.mjs [--since ISO] [--status open|all]` writes
+  JSONL (suggestion groups with supporter counts, proposals, tallies, with
+  `term_redirects` applied); `scripts/resolve-feedback.mjs --accept id,..
+  --decline id,.. --note "…"` records decisions so the next export skips
+  them; `scripts/remove-user.mjs <id> [--ban] [--purge]` is the moderation
+  toolkit. Acting on feedback is still a pull request against the JSON.
 
 ## Adding a glossary term
 
@@ -598,6 +732,32 @@ through `.github/workflows/docker.yml`, publishes it to
 five minutes. Verify with `scripts/verify-deploy.sh https://glossary.ethereum.org`
 once it lands. There is no wrangler in the repo and no Cloudflare
 deployment; do not add either back.
+
+### Deploy previews
+
+Add the `preview` label to a pull request and `docker.yml` builds the PR
+head as `ghcr.io/ethereum/ethglossary:pr-<number>-<sha>`; devops' ArgoCD
+deploys it to `https://ethglossary-<number>.previews.ethquokkaops.io` and
+comments the link on the PR. Every push to a labeled PR rebuilds it.
+
+- **Opt-in, same-repo only.** Fork PRs never build: their code must not run
+  with the repo's token. Adding any other label does not rebuild.
+- **Never `sha-*`.** Production's image updater rolls out the newest `sha-*`
+  tag, so a preview tagged that way would ship to production.
+- **Each preview has its own empty database**, created with the preview and
+  destroyed with it, so migrations and the startup indexer in a PR never
+  touch production's data. Nothing from production shows on a preview.
+- **No OAuth on previews.** The GitHub and Discord apps accept only
+  production's callback URL, so devops leave their variables (and
+  `ETH_RPC_URL`) out; the buttons do not render. Sign-In with Ethereum
+  works on any host.
+- **Never indexed.** Preview images are built with `PREVIEW=1`, which makes
+  `src/index.ts` send `X-Robots-Tag: noindex, nofollow` on every response.
+- **Cleanup is automatic.** Closing or merging the PR tears down the preview
+  and its database (ArgoCD), and `preview-cleanup.yml` deletes its images
+  from GHCR. PR builds read the Actions layer cache but never write to it.
+- Previews are amd64-only and carry no provenance attestation; production
+  images are multi-arch and do.
 
 ### Push to GitHub
 

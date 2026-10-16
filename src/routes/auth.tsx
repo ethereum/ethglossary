@@ -20,7 +20,10 @@ import { csrf } from "hono/csrf"
 import { bodyLimit } from "hono/body-limit"
 import type { Context } from "hono"
 import { SignInPage } from "../ui/pages/signin"
-import { AccountPage } from "../ui/pages/account"
+import { AccountPage, DELETE_PHRASE } from "../ui/pages/account"
+import { ACCOUNTS_ENABLED } from "../lib/constants"
+import { profileFeedback } from "../feedback/profile"
+import type { ProfileFeedback } from "../feedback/profile"
 import { getDb } from "../db/client"
 import type { Sql } from "../db/client"
 import { requestOrigin } from "../lib/request-origin"
@@ -112,11 +115,30 @@ app.get("/signin", async (c) => {
   return signInPage(c, {})
 })
 
-app.get("/account", (c) => {
+app.get("/account", async (c) => {
   const user = c.var.user
   if (!user) return c.redirect("/signin?next=%2Faccount", 302)
+  // The feedback view is a nicety: if the read fails the page still renders.
+  let feedback: ProfileFeedback | undefined
+  const sql = getDb()
+  if (sql && ACCOUNTS_ENABLED) {
+    try {
+      feedback = await profileFeedback(sql, user.id)
+    } catch (err) {
+      console.error("profile feedback read failed:", err instanceof Error ? err.message : err)
+    }
+  }
   return c.html(
-    <AccountPage user={user} saved={c.req.query("saved") === "1"} activeLang={navLang(c)} url={pageUrl(c)} />
+    <AccountPage
+      user={user}
+      feedback={feedback}
+      editing={c.req.query("edit") === "1"}
+      saved={c.req.query("saved") === "1"}
+      confirmingDelete={c.req.query("delete") === "confirm" || c.req.query("delete") === "mismatch"}
+      deleteError={c.req.query("delete") === "mismatch"}
+      activeLang={navLang(c)}
+      url={pageUrl(c)}
+    />
   )
 })
 
@@ -134,6 +156,9 @@ app.post("/account", async (c) => {
 app.post("/account/delete", async (c) => {
   const user = c.var.user
   if (!user) return c.redirect("/signin", 302)
+  // The browser already insists on the phrase; a form without it is not a browser.
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+  if (form.confirm !== DELETE_PHRASE) return c.redirect("/account?delete=mismatch#delete-account", 303)
   const sql = await requireDb(c)
   if (sql instanceof Response) return sql
   await deleteAccount(sql, user.id)
@@ -141,9 +166,17 @@ app.post("/account/delete", async (c) => {
   return c.redirect("/", 303)
 })
 
+/*
+ * Signing out keeps the reader where they were: the nav form carries the
+ * current path as `next`. The account page is the one place that needs a
+ * session, so from there (or with no usable path) they go home.
+ */
 app.post("/auth/signout", async (c) => {
   await destroySession(getDb(), c)
-  return c.redirect("/", 303)
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+  const next = safeNextPath(typeof form.next === "string" ? form.next : null)
+  const path = next?.split(/[?#]/)[0] ?? ""
+  return c.redirect(next && path !== "/account" && !path.startsWith("/account/") ? next : "/", 303)
 })
 
 // ------------------------------------------------------------------ oauth

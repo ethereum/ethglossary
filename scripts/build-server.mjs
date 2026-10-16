@@ -9,7 +9,41 @@
  */
 
 import { build } from "esbuild"
+import path from "node:path"
 import { pathToFileURL } from "node:url"
+
+/**
+ * `import script from "./x.js?island"` yields x.js and everything it imports
+ * as one minified browser script, as a string the page inlines. Islands that
+ * outgrow a template literal live as real modules this way; the rest of the
+ * site's islands are still written as strings.
+ */
+const island = {
+  name: "island",
+  setup(b) {
+    b.onResolve({ filter: /\?island$/ }, (args) => ({
+      path: path.resolve(args.resolveDir, args.path.replace(/\?island$/, "")),
+      namespace: "island",
+    }))
+    b.onLoad({ filter: /.*/, namespace: "island" }, async (args) => {
+      const out = await build({
+        entryPoints: [args.path],
+        bundle: true,
+        minify: true,
+        format: "iife",
+        target: "es2020",
+        legalComments: "none",
+        write: false,
+        metafile: true,
+      })
+      return {
+        contents: out.outputFiles[0].text.trim(),
+        loader: "text",
+        watchFiles: Object.keys(out.metafile.inputs).map((f) => path.resolve(f)),
+      }
+    })
+  },
+}
 
 export const options = {
   entryPoints: ["src/server.ts"],
@@ -28,6 +62,7 @@ export const options = {
   banner: {
     js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
   },
+  plugins: [island],
   logLevel: "info",
 }
 

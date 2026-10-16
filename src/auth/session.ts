@@ -127,11 +127,17 @@ async function resolveSession(sql: Sql, token: string): Promise<SessionUser | nu
   }
 }
 
-/** Paths whose responses never depend on who is asking. */
+/**
+ * Paths whose responses never depend on who is asking: the read API, static
+ * assets and the crawler files. The feedback write API under /api/v1/feedback
+ * is the one API prefix that does need the session.
+ */
 const SKIP_PREFIXES = ["/api/", "/assets/", "/fonts/", "/img/"]
 const SKIP_EXACT = new Set(["/healthz", "/favicon.svg", "/openapi.json", "/llms.txt", "/robots.txt", "/sitemap.xml", "/docs"])
+const NEEDS_SESSION_PREFIXES = ["/api/v1/feedback/"]
 
 export function isUserAgnosticPath(path: string): boolean {
+  if (NEEDS_SESSION_PREFIXES.some((p) => path.startsWith(p))) return false
   return SKIP_EXACT.has(path) || SKIP_PREFIXES.some((p) => path.startsWith(p))
 }
 

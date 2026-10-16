@@ -93,11 +93,15 @@ at four slots, not incomplete at five.
 
 ## Consequences for feedback storage
 
-- The unique key on a vote is `(user, lang, term_key, context)`.
-- `term_key` is the **canonical term name** (`"proxy contract"`), never the
-  `id` slug (`proxy-contract`). See `docs/gotchas.md`.
-- Progress state is derived, never stored: compare the set of contexts a user
-  has acted on against `applicableContexts(entry)`.
-- A vote is stamped with the slot hash it was cast against, so that editing
-  one context expires feedback on that context alone. See
-  `slotValue()` in `src/lib/context-types.ts` for the hashed representation.
+- A vote is one row per `(user, slot version)`, where a slot version is
+  `(term_uid, lang, context, value_hash)`: the hash of `slotValue()` for the
+  exact value the reviewer saw. Editing one context therefore expires
+  feedback on that context alone, and a rollback revives it.
+- Terms are identified by `uid` (stable, see `scripts/term-uid.mjs`), never
+  by the canonical name or the `id` slug, both of which change on rename.
+  Translation files are still keyed by canonical name; the store joins
+  through the master entry.
+- Progress state is derived, never stored: the reader's covered
+  `(uid, context, hash)` set against `applicableContexts(entry)` and the
+  live hashes. See `src/feedback/store.ts` and `buildTermList()` in
+  `src/routes/viewer.tsx`.

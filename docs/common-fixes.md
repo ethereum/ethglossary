@@ -92,6 +92,26 @@ When a token in `always-latin-tokens.json` gains an established native-script fo
 
 ---
 
+## Review community feedback
+
+Feedback is advisory and lives in Postgres; the edit path is still a pull
+request against the JSON files. The loop, from a machine with database
+access:
+
+1. Export what is open: `DATABASE_URL=... node scripts/export-feedback.mjs > feedback.jsonl`
+   (`--since ISO` for a window, `--status all` to include closed items).
+   One JSON line per suggestion group, proposal, slot tally or definition
+   tally, each saying whether the value it is about is still live.
+2. Review, with or without an LLM. Apply what you accept as data edits
+   using the recipes above; the next deploy's indexer records the change
+   and the Versions rail shows it.
+3. Close the rows: `node scripts/resolve-feedback.mjs --accept id,id --decline id,id --note "..."`.
+   The author sees the status and the note on their account page.
+   Withdrawn rows are skipped; ids that matched nothing are a sign the
+   author withdrew between export and resolve.
+4. An abusive account: `node scripts/remove-user.mjs <id> --ban [--purge]`.
+   `--purge` also deletes every vote and definition vote.
+
 ## Validation block (apply to every recipe)
 
 After making changes, run these in order:

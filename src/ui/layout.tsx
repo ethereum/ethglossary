@@ -11,13 +11,17 @@ import { raw } from "hono/html"
 import { getContext } from "hono/context-storage"
 import type { AppEnv, SessionUser } from "../auth/session"
 import { Icon } from "./icon"
+import { cssHref } from "../lib/assets"
 import { ROW_LINK_ISLAND } from "./row-link"
 import { TOOLTIP_ISLAND } from "./tooltip"
 import { NAV_DRAWER_ISLAND } from "./nav-drawer"
+import { ACCOUNT_MENU_ISLAND } from "./account-menu"
+import chevronDown from "lucide-static/icons/chevron-down.svg"
 import menu from "lucide-static/icons/menu.svg"
 import moon from "lucide-static/icons/moon.svg"
 import x from "lucide-static/icons/x.svg"
 import sun from "lucide-static/icons/sun.svg"
+import heart from "lucide-static/icons/heart.svg"
 import discord from "./icons/discord.svg"
 import ethglossary from "./icons/ethglossary.svg"
 import farcaster from "./icons/farcaster.svg"
@@ -83,22 +87,28 @@ interface LayoutProps {
 }
 
 /**
- * Runs before paint. Reads the stored preference and stamps data-theme, so
- * the toggle wins over the OS setting in both directions. Wrapped in
+ * Runs before paint. The default is the OS setting, applied by CSS alone when
+ * <html> carries no data-theme. A stored preference exists only while it
+ * disagrees with the OS: one that matches is dropped, so a reader who toggles
+ * back (or whose OS comes round to their choice) follows the system again
+ * instead of being pinned to a value they never meant to keep. Wrapped in
  * try/catch because storage throws outright in some privacy modes.
  */
 const THEME_SCRIPT = `
 (function () {
   try {
+    var os = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     var t = localStorage.getItem("ethglossary-theme");
+    if (t === os) {
+      localStorage.removeItem("ethglossary-theme");
+      t = null;
+    }
     if (t === "light" || t === "dark") {
       document.documentElement.setAttribute("data-theme", t);
     }
     // Keep the toggle's label honest before first paint. Server-rendered it
     // assumes dark; correct it when the resolved theme is actually light.
-    var light = t === "light" ||
-      (!t && window.matchMedia("(prefers-color-scheme: light)").matches);
-    if (light) {
+    if ((t || os) === "light") {
       document.addEventListener("DOMContentLoaded", function () {
         var b = document.getElementById("theme-toggle");
         if (b) b.setAttribute("aria-label", "Switch to dark theme");
@@ -112,17 +122,29 @@ const TOGGLE_SCRIPT = `
 (function () {
   var btn = document.getElementById("theme-toggle");
   if (!btn) return;
+  var root = document.documentElement;
+  var mq = window.matchMedia("(prefers-color-scheme: light)");
+  function resolved() {
+    return root.getAttribute("data-theme") || (mq.matches ? "light" : "dark");
+  }
+  function label() {
+    btn.setAttribute("aria-label", resolved() === "light" ? "Switch to dark theme" : "Switch to light theme");
+  }
   btn.addEventListener("click", function () {
-    var root = document.documentElement;
-    var current = root.getAttribute("data-theme");
-    if (!current) {
-      current = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    var next = resolved() === "light" ? "dark" : "light";
+    var os = mq.matches ? "light" : "dark";
+    // Choosing what the OS already says is choosing to follow the OS.
+    if (next === os) {
+      root.removeAttribute("data-theme");
+      try { localStorage.removeItem("ethglossary-theme"); } catch (e) {}
+    } else {
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("ethglossary-theme", next); } catch (e) {}
     }
-    var next = current === "light" ? "dark" : "light";
-    root.setAttribute("data-theme", next);
-    btn.setAttribute("aria-label", next === "light" ? "Switch to dark theme" : "Switch to light theme");
-    try { localStorage.setItem("ethglossary-theme", next); } catch (e) {}
+    label();
   });
+  // CSS follows an OS switch on its own while unstamped; the label must too.
+  mq.addEventListener("change", label);
 })();
 `
 
@@ -179,12 +201,21 @@ function accountsAvailable(): boolean {
  * database says. /signin and /account still answer by URL, so the sign-in
  * flows can be verified in production before there is anything for a
  * signed-in person to do. After the flip, three states. Signed in: the
- * display name, linking to the account page, with a sign-out form beside it.
- * Signed out with accounts available: a link to /signin that returns to the
- * current page. No database: the inert button again.
+ * display name, which discloses Profile and Sign out -- a <details> in the
+ * bar, plain rows in the drawer where there is room. Signed out with
+ * accounts available: a link to /signin that returns to the current page.
+ * No database: the inert button again.
  */
-export const SignInControl = ({ block, path }: { block?: boolean; path?: string } = {}) => {
+export const SignInControl = ({
+  block,
+  path,
+  brand = "default",
+}: { block?: boolean; path?: string; brand?: BrandTone } = {}) => {
   const user = currentUser()
+  // On the hero the nav floats over artwork that is dark in both themes, so
+  // the name is a fixed white like the theme toggle beside it. The menu that
+  // drops from it is a themed panel and keeps the page's colours.
+  const hero = brand === "hero"
   const pill = `whitespace-nowrap rounded-full bg-primary px-4 py-2 text-label-md font-bold text-primary-foreground ${
     block ? "w-full" : ""
   }`
@@ -198,21 +229,47 @@ export const SignInControl = ({ block, path }: { block?: boolean; path?: string 
   }
 
   if (user) {
+    const name = user.displayName ?? "Account"
+    // Sign-out returns to the page it was clicked on; the route falls back to home.
+    const signOut = (cls: string) => (
+      <form method="post" action="/auth/signout">
+        {path ? <input type="hidden" name="next" value={path} /> : null}
+        <button type="submit" class={cls}>
+          Sign out
+        </button>
+      </form>
+    )
+    if (block) {
+      const row = "rounded-md px-3 py-3 text-body text-foreground hover:bg-muted"
+      return (
+        <div class="flex flex-col border-t border-border-subtle pt-3">
+          <p class="truncate px-3 py-2 text-label-md font-bold text-foreground-strong">{name}</p>
+          <a class={`${row} no-underline hover:no-underline`} href="/account">
+            Profile
+          </a>
+          {signOut(`${row} w-full text-left`)}
+        </div>
+      )
+    }
+    const item = "rounded-md px-3 py-2 text-label-md leading-6 text-foreground hover:bg-muted hover:text-foreground-strong"
     return (
-      <span class={`flex items-center gap-3 ${block ? "w-full justify-between" : ""}`}>
-        <a
-          class="max-w-48 truncate text-label-md leading-6 font-bold text-foreground-strong no-underline hover:underline"
-          href="/account"
-          title="Your account"
+      <details class="group relative" id="account-menu">
+        <summary
+          class={`flex list-none items-center gap-1 text-label-md leading-6 font-bold hover:underline [&::-webkit-details-marker]:hidden ${
+            hero ? "text-white" : "text-foreground-strong"
+          }`}
+          aria-label={`Account menu for ${name}`}
         >
-          {user.displayName ?? "Account"}
-        </a>
-        <form method="post" action="/auth/signout">
-          <button type="submit" class="text-label-md text-foreground-subtle hover:text-foreground-strong">
-            Sign out
-          </button>
-        </form>
-      </span>
+          <span class="max-w-48 truncate">{name}</span>
+          <Icon svg={chevronDown} class="size-4 transition-transform group-open:rotate-180" />
+        </summary>
+        <div class="absolute end-0 top-full z-50 mt-2 flex min-w-40 flex-col rounded-card border border-border bg-background p-1 shadow-xl">
+          <a class={`${item} no-underline hover:no-underline`} href="/account">
+            Profile
+          </a>
+          {signOut(`${item} w-full text-left`)}
+        </div>
+      </details>
     )
   }
 
@@ -324,7 +381,7 @@ export const Nav = ({
       <div class="ml-auto flex items-center gap-3">
         {/* Hidden below md, where it lives in the drawer instead. */}
         <span class="hidden md:block">
-          <SignInControl path={path} />
+          <SignInControl path={path} brand={brand} />
         </span>
         <button
           id="theme-toggle"
@@ -460,7 +517,9 @@ export const Footer = () => (
         ))}
       </div>
       <p class="text-center font-serif text-label-sm text-white">
-        An open-source project for the Ethereum community. MPL-2.0.
+        An open-source project, made with{" "}
+        <Icon svg={heart} class="heartbeat inline-flex size-4 align-text-bottom text-rose" aria-hidden="true" />
+        <span class="sr-only">love</span> for the Ethereum community. MPL-2.0.
       </p>
     </div>
   </footer>
@@ -504,7 +563,7 @@ export const Layout = ({
       <meta property="og:image:height" content="630" />
       <meta
         property="og:image:alt"
-        content="An illustrated Ethereum cityscape at dusk, the ETHGlossary hero artwork"
+        content="The ETHGlossary wordmark over an illustrated Ethereum cityscape at dusk, with the word Ethereum written across the sky in a dozen scripts"
       />
       <meta name="twitter:card" content="summary_large_image" />
       {/* ETHGlossary has no accounts of its own; attribution goes to ethereum.org. */}
@@ -513,7 +572,7 @@ export const Layout = ({
 
       <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       <link rel="apple-touch-icon" href="/favicon.svg" />
-      <link rel="stylesheet" href="/assets/app.css" />
+      <link rel="stylesheet" href={cssHref()} />
       <link
         rel="preload"
         href="/fonts/noto-sans-latin-400-normal.woff2"
@@ -546,6 +605,7 @@ export const Layout = ({
       <script>{raw(TOOLTIP_ISLAND)}</script>
       <script>{raw(ROW_LINK_ISLAND)}</script>
       <script>{raw(NAV_DRAWER_ISLAND)}</script>
+      {currentUser() ? <script>{raw(ACCOUNT_MENU_ISLAND)}</script> : null}
       {island ? <script>{raw(island)}</script> : null}
     </body>
   </html>

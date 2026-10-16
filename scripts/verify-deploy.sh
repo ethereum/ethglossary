@@ -55,5 +55,27 @@ LLMS="$(curl -sf "${BASE}/llms.txt")" || fail "/llms.txt did not return 200"
 [ -n "${LLMS}" ] || fail "/llms.txt returned an empty body"
 echo "  /llms.txt -- ${#LLMS} bytes"
 
+# 6. The stylesheet link carries a content hash and that URL serves with a long immutable cache.
+CSS_HREF="$(curl -sf "${BASE}/" | grep -o 'href="/assets/app.css?v=[0-9a-f]*"' | head -1 | sed 's/href="//; s/"$//')"
+[ -n "${CSS_HREF}" ] || fail "the page does not link a versioned stylesheet (/assets/app.css?v=...)"
+CSS_CACHE="$(curl -sI "${BASE}${CSS_HREF}" | tr -d '\r' | grep -i '^cache-control:' | head -1)"
+case "${CSS_CACHE}" in *immutable*) ;; *) fail "stylesheet cache header is '${CSS_CACHE}', expected immutable";; esac
+echo "  ${CSS_HREF} -- ${CSS_CACHE#*: }"
+
+# 7. Accounts and feedback. /signin is 200 with a database and 503 without
+#    one; either way the write API must be mounted and must refuse an
+#    anonymous write with 401, and a term page must carry its feedback mode.
+SIGNIN_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/signin")"
+case "${SIGNIN_CODE}" in 200|503) ;; *) fail "/signin answered ${SIGNIN_CODE}, expected 200 (database) or 503 (none)";; esac
+echo "  /signin -- ${SIGNIN_CODE}$([ "${SIGNIN_CODE}" = 503 ] && echo ' (no database: accounts off)')"
+ACCOUNT_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/account")"
+case "${ACCOUNT_CODE}" in 302|503) ;; *) fail "/account answered ${ACCOUNT_CODE} to an anonymous request, expected a redirect to /signin";; esac
+WRITE_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"votes":[]}' "${BASE}/api/v1/feedback/translations/es/gas/votes")"
+[ "${WRITE_CODE}" = 401 ] || fail "anonymous feedback write answered ${WRITE_CODE}, expected 401"
+echo "  /api/v1/feedback -- anonymous write refused (401)"
+MODE="$(curl -sf "${BASE}/style-guide/gas" | grep -o 'data-sg-feedback="[a-z]*"' | head -1)"
+[ -n "${MODE}" ] || fail "/style-guide/gas has no feedback mode marker"
+echo "  /style-guide/gas -- ${MODE}"
+
 echo
 echo "OK: ${BASE} responds correctly on all probed endpoints."

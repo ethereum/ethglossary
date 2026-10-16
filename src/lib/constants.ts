@@ -6,6 +6,7 @@
  */
 
 /** Where the translation community coordinates. */
+export const ETHEREUM_ORG_URL = "https://ethereum.org"
 export const DISCORD_URL = "https://ethereum.org/discord"
 
 /** Source repository. */
@@ -29,6 +30,7 @@ export const X_HANDLE = "@ethdotorg"
  * `scripts/build-og.sh`. Relative -- the origin is taken from the request, so
  * this works on whichever host the site is served from.
  */
+/** Exported at 1200x630, the size every share card is laid out at; the tags state that size. */
 export const OG_IMAGE = "/img/og.jpg"
 
 /** Shown on share cards and in search results for pages with nothing better. */
@@ -51,7 +53,7 @@ export const LANG_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
  * there is something a signed-in person can do. Flip this in the PR that
  * ships votes and suggestions, and the whole surface appears at once.
  */
-export const ACCOUNTS_ENABLED = false
+export const ACCOUNTS_ENABLED = true
 
 /**
  * Tooltip for the controls ACCOUNTS_ENABLED gates.
