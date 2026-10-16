@@ -643,7 +643,7 @@ export const HomePage = ({
                 <ExternalLink class="font-bold text-white underline" href="https://ethux.design/report/lost-in-translation.html" hideArrow>
                   Lost in Translation, EthUX
                 </ExternalLink>{" "}
-                &ndash; Audit of 6 months of ethereum.org wallet clicks
+                &ndash; Audit of 8 months of ethereum.org wallet clicks
               </p>
             </div>
 
